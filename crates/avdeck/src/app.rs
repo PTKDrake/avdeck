@@ -336,6 +336,11 @@ impl App {
         if self.tab(id).and_then(|tab| tab.pid()) == extended::docked_pid() {
             extended::detach();
         }
+        // Its Extended Controls go with the tab, docked or not.
+        if let Some(emulator) = self.tab(id).and_then(|tab| tab.emulator()) {
+            self.runtime
+                .spawn(crate::session::close_extended_controls(emulator));
+        }
         self.tabs.retain(|tab| tab.avd.id != id);
         if self.page == Page::Emulator(id.to_owned()) {
             self.page = self
@@ -370,6 +375,20 @@ impl App {
         }
         let _ = self.config.save();
         extended::detach();
+        // Every tab's Extended Controls, docked or not, before the process ends (at most 2 s).
+        let emulators: Vec<_> = self.tabs.iter().filter_map(|tab| tab.emulator()).collect();
+        self.runtime.block_on(async {
+            let tasks: Vec<_> = emulators
+                .into_iter()
+                .map(|emulator| tokio::spawn(crate::session::close_extended_controls(emulator)))
+                .collect();
+            let _ = tokio::time::timeout(Duration::from_secs(2), async {
+                for task in tasks {
+                    let _ = task.await;
+                }
+            })
+            .await;
+        });
     }
 
     pub fn save_config(&mut self) {

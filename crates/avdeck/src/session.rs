@@ -198,6 +198,15 @@ async fn discover(port: u16) -> Result<running::Running> {
     }
 }
 
+/// Closes the emulator's Extended Controls window if it is open (within 2 s).
+pub async fn close_extended_controls(mut emulator: Emulator) {
+    let _ = tokio::time::timeout(
+        Duration::from_secs(2),
+        emulator.ui.close_extended_controls(()),
+    )
+    .await;
+}
+
 /// Asks the emulator on gRPC `port` to shut down cleanly, like closing its window: it saves the
 /// quick-boot snapshot unless started with `-no-snapshot-save`. Returns once the request is out
 /// (the call itself often never answers: the emulator goes away).
@@ -278,6 +287,9 @@ async fn run(
         state.phase = Phase::Running;
         state.emulator = Some(emulator.clone());
     }
+    // An Extended Controls window left open by an Avdeck that ended abruptly: close it, it
+    // would float on its own, undocked.
+    context.spawn(close_extended_controls(emulator.clone()));
     context.ctx.request_repaint();
 
     // Phone and tablet AVDs have no mouse device in the guest, so `injectWheel` does nothing;
