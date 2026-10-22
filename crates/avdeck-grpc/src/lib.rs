@@ -25,6 +25,9 @@ pub mod proto {
 use control::emulator_controller_client::EmulatorControllerClient;
 use control::snapshot_service_client::SnapshotServiceClient;
 use control::ui_controller_client::UiControllerClient;
+mod frames;
+
+pub use frames::{Frame, SharedFrames};
 pub use proto::android::emulation::control;
 
 /// A full-resolution RGBA frame of a 2560x1600 tablet is ~16 MB, far above tonic's 4 MB default.

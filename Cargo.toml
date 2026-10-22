@@ -10,7 +10,9 @@ edition = "2024"
 avdeck-core = { path = "crates/avdeck-core" }
 avdeck-grpc = { path = "crates/avdeck-grpc" }
 anyhow = "1.0.104"
+eframe = "0.37.0"
 png = "0.18.1"
+raw-window-handle = "0.6.2"
 prost = "0.14.4"
 prost-types = "0.14.4"
 protoc-bin-vendored = "3.3.0"

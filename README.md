@@ -4,7 +4,8 @@ An Android Emulator manager for Windows, written in Rust. Emulators run headless
 (`-qt-hide-window`); Avdeck shows each one in a tab of its own window, with a device frame and
 toolbar, and drives it over the emulator's gRPC API. See `PLAN.md` (Vietnamese) for the roadmap.
 
-Status: **M0 done** (gRPC spike, see `docs/grpc-notes.md`). There is no app yet.
+Status: **M0 done** (gRPC spike, see `docs/grpc-notes.md`); M1 in progress: `avdeck.exe [--grpc PORT]`
+attaches to a running emulator, shows its screen and has the emulator toolbar.
 
 ## Build
 
@@ -19,8 +20,9 @@ cargo test
 
 | Path | Purpose |
 |---|---|
-| `crates/avdeck-core` | AVD lookup (`avd`), running emulators from discovery files (`running`). No UI, no gRPC |
-| `crates/avdeck-grpc` | gRPC client: generated stubs, bearer-token auth, `Emulator` connection |
+| `crates/avdeck` | The app (eframe/egui): screen view, touch input, toolbar with Phosphor icons (`assets/`) |
+| `crates/avdeck-core` | AVD lookup (`avd`), running emulators from discovery files (`running`), screen fit and pointer mapping (`display`). No UI, no gRPC |
+| `crates/avdeck-grpc` | gRPC client: generated stubs, bearer-token auth, `Emulator` connection, shared-memory frames (`SharedFrames`) |
 | `crates/avdeck-grpc/examples/spike.rs` | M0 spike: launch/attach, measure screen streaming, test input |
 | `proto/` | Protos vendored from emulator 37.2.12 (`D:\Android\SDK\emulator\lib`) |
 | `docs/grpc-notes.md` | How the emulator's gRPC API behaves on Windows, with measurements |

@@ -9,6 +9,7 @@ prost.workspace = true
 prost-types.workspace = true
 tonic.workspace = true
 tonic-prost.workspace = true
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_System_Memory"] }
 
 [build-dependencies]
 protoc-bin-vendored.workspace = true
@@ -19,4 +20,4 @@ anyhow.workspace = true
 avdeck-core.workspace = true
 png.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
-windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_System_Memory", "Win32_System_Threading"] }
+windows-sys = { workspace = true, features = ["Win32_System_Threading"] }

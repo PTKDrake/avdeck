@@ -1,0 +1,15 @@
+[package]
+name = "avdeck"
+description = "Android Emulator manager: emulators in tabs, driven over gRPC"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+avdeck-core.workspace = true
+avdeck-grpc.workspace = true
+eframe.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
+tonic.workspace = true
+raw-window-handle.workspace = true
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
