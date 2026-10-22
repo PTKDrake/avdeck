@@ -1,0 +1,22 @@
+[package]
+name = "avdeck-grpc"
+description = "gRPC client for the Android Emulator (protos vendored from emulator 37.2.12)"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+prost.workspace = true
+prost-types.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+
+[build-dependencies]
+protoc-bin-vendored.workspace = true
+tonic-prost-build.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+avdeck-core.workspace = true
+png.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_System_Memory", "Win32_System_Threading"] }

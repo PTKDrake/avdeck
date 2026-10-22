@@ -1,0 +1,21 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+avdeck-core = { path = "crates/avdeck-core" }
+avdeck-grpc = { path = "crates/avdeck-grpc" }
+anyhow = "1.0.104"
+png = "0.18.1"
+prost = "0.14.4"
+prost-types = "0.14.4"
+protoc-bin-vendored = "3.3.0"
+tokio = "1.54.1"
+tonic = "0.14.6"
+tonic-prost = "0.14.6"
+tonic-prost-build = "0.14.6"
+windows-sys = "0.61.2"

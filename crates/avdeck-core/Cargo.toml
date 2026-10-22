@@ -1,0 +1,7 @@
+[package]
+name = "avdeck-core"
+description = "SDK and AVD discovery for Avdeck, independent of the UI"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
