@@ -1175,10 +1175,18 @@ fn tab_widget(
 ) -> (bool, bool, egui::Response) {
     let palette = theme::palette(ui);
     let font = egui::FontId::proportional(13.5);
+    // Hover eases in, keyed by the id the tab is about to get.
+    let hot = ui.ctx().animate_bool_with_time(
+        ui.next_auto_id().with("hover"),
+        ui.ctx()
+            .read_response(ui.next_auto_id())
+            .is_some_and(|response| response.hovered()),
+        0.12,
+    );
     let text_color = if selected {
         palette.text
     } else {
-        palette.muted
+        palette.muted.lerp_to_gamma(palette.text, hot)
     };
     // Long names end in "…"; the full name shows on hover.
     let mut job = egui::text::LayoutJob::simple_singleline(label.to_owned(), font, text_color);
@@ -1208,8 +1216,12 @@ fn tab_widget(
             egui::Stroke::new(1.0, palette.border),
             egui::StrokeKind::Inside,
         );
-    } else if hovered {
-        painter.rect_filled(rect, egui::CornerRadius::same(8), palette.surface_hover);
+    } else if hot > 0.0 {
+        painter.rect_filled(
+            rect,
+            egui::CornerRadius::same(8),
+            palette.surface_hover.gamma_multiply(hot),
+        );
     }
     let mut x = rect.left() + 12.0;
     if let Some(color) = dot {

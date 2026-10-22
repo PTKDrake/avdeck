@@ -420,6 +420,28 @@ fn appearance(app: &mut App, ui: &mut egui::Ui) {
             (Appearance::Dark, icons::MOON, "Dark"),
         ];
         let segment = (width - 6.0) / choices.len() as f32;
+        // The selection pill slides to the chosen segment.
+        let chosen = choices
+            .iter()
+            .position(|(value, _, _)| *value == app.settings.appearance)
+            .unwrap_or(0);
+        let at = ui.ctx().animate_value_with_time(
+            ui.scope_id().with("appearance-pill"),
+            chosen as f32,
+            0.18,
+        );
+        let pill = egui::Rect::from_min_size(
+            egui::pos2(rect.left() + 3.0 + segment * at, rect.top() + 3.0),
+            vec2(segment, 28.0),
+        );
+        ui.painter()
+            .rect_filled(pill, egui::CornerRadius::same(7), palette.surface_hover);
+        ui.painter().rect_stroke(
+            pill,
+            egui::CornerRadius::same(7),
+            egui::Stroke::new(1.0, palette.border),
+            egui::StrokeKind::Inside,
+        );
         for (index, (value, glyph, label)) in choices.into_iter().enumerate() {
             let cell = egui::Rect::from_min_size(
                 egui::pos2(rect.left() + 3.0 + segment * index as f32, rect.top() + 3.0),
@@ -431,21 +453,12 @@ fn appearance(app: &mut App, ui: &mut egui::Ui) {
                 egui::Sense::click(),
             );
             let selected = app.settings.appearance == value;
-            if selected {
-                ui.painter()
-                    .rect_filled(cell, egui::CornerRadius::same(7), palette.surface_hover);
-                ui.painter().rect_stroke(
-                    cell,
-                    egui::CornerRadius::same(7),
-                    egui::Stroke::new(1.0, palette.border),
-                    egui::StrokeKind::Inside,
-                );
-            }
-            let color = if selected || response.hovered() {
-                palette.text
+            let hot = if selected {
+                1.0
             } else {
-                palette.muted
+                theme::hover(ui, &response)
             };
+            let color = palette.muted.lerp_to_gamma(palette.text, hot);
             ui.painter().text(
                 cell.center(),
                 egui::Align2::CENTER_CENTER,

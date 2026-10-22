@@ -22,6 +22,8 @@ pub struct Palette {
     pub text: Color32,
     pub muted: Color32,
     pub faint: Color32,
+    /// Icon buttons at rest: thin Phosphor strokes need more contrast than muted text.
+    pub icon: Color32,
     pub accent: Color32,
     pub accent_hover: Color32,
     pub on_accent: Color32,
@@ -47,6 +49,7 @@ pub const DARK: Palette = Palette {
     text: hex(0xE7E9EE),
     muted: hex(0x9AA3AF),
     faint: hex(0x6B7280),
+    icon: hex(0xA7AFBA),
     accent: hex(0x4C8DFF),
     accent_hover: hex(0x6AA0FF),
     on_accent: hex(0xFFFFFF),
@@ -66,7 +69,8 @@ pub const LIGHT: Palette = Palette {
     input: hex(0xFFFFFF),
     text: hex(0x15181E),
     muted: hex(0x5B6472),
-    faint: hex(0x8A93A0),
+    faint: hex(0x737C89),
+    icon: hex(0x343B47),
     accent: hex(0x2F6FEB),
     accent_hover: hex(0x255FD0),
     on_accent: hex(0xFFFFFF),
@@ -216,24 +220,57 @@ pub fn muted(ui: &Ui, text: impl Into<String>) -> RichText {
     RichText::new(text).color(palette(ui).muted)
 }
 
-/// A filled button whose fill follows its state (normal, hovered, pressed).
-fn filled(ui: &mut Ui, text: impl Into<String>, fill: Color32, hover: Color32) -> Response {
-    let on = palette(ui).on_accent;
+/// Adds `button` with its fill and border fading from `rest` to `hot` on hover instead of
+/// snapping, and sinking a little while pressed. Each pair is (fill, border).
+fn eased_button(
+    ui: &mut Ui,
+    button: egui::Button,
+    rest: (Color32, Color32),
+    hot: (Color32, Color32),
+    text: Color32,
+) -> Response {
     ui.scope(|ui| {
+        // The button's id is the next one this scope hands out: read how it was last frame.
+        let id = ui.next_auto_id();
+        let before = ui.ctx().read_response(id);
+        let hovered = before.as_ref().is_some_and(|response| response.hovered());
+        let pressed = before
+            .as_ref()
+            .is_some_and(|response| response.is_pointer_button_down_on());
+        let ctx = ui.ctx().clone();
+        let hover = ctx.animate_bool_with_time(id.with("hover"), hovered, 0.12);
+        let press = ctx.animate_bool_with_time(id.with("press"), pressed, 0.08);
+        let fill = rest
+            .0
+            .lerp_to_gamma(hot.0, hover)
+            .lerp_to_gamma(Color32::BLACK, 0.12 * press);
+        let border = rest.1.lerp_to_gamma(hot.1, hover);
         let widgets = &mut ui.visuals_mut().widgets;
-        for (state, color) in [
-            (&mut widgets.inactive, fill),
-            (&mut widgets.hovered, hover),
-            (&mut widgets.active, hover),
+        for state in [
+            &mut widgets.inactive,
+            &mut widgets.hovered,
+            &mut widgets.active,
         ] {
-            state.weak_bg_fill = color;
-            state.bg_fill = color;
-            state.bg_stroke = Stroke::NONE;
-            state.fg_stroke = Stroke::new(1.5, on);
+            state.weak_bg_fill = fill;
+            state.bg_fill = fill;
+            state.bg_stroke = if border == fill {
+                Stroke::NONE
+            } else {
+                Stroke::new(1.0, border)
+            };
+            state.fg_stroke = Stroke::new(1.5, text);
+            state.expansion = -press;
         }
-        ui.add(egui::Button::new(RichText::new(text).color(on)).min_size(vec2(0.0, 32.0)))
+        ui.add(button)
     })
     .inner
+}
+
+/// A filled button: accent or danger colored, white text.
+fn filled(ui: &mut Ui, text: impl Into<String>, fill: Color32, hover: Color32) -> Response {
+    let on = palette(ui).on_accent;
+    let button = egui::Button::new(RichText::new(text).color(on)).min_size(vec2(0.0, 32.0));
+    eased_button(ui, button, (fill, fill), (hover, hover), on)
 }
 
 /// The main action of a page or dialog.
@@ -249,46 +286,131 @@ pub fn danger(ui: &mut Ui, text: impl Into<String>) -> Response {
         ui,
         text,
         palette.danger,
-        palette.danger.gamma_multiply(0.85),
+        palette.danger.lerp_to_gamma(Color32::BLACK, 0.12),
     )
 }
 
 pub fn secondary(ui: &mut Ui, text: impl Into<String>) -> Response {
-    ui.add(egui::Button::new(text.into()).min_size(vec2(0.0, 32.0)))
+    let palette = palette(ui);
+    let button = egui::Button::new(text.into()).min_size(vec2(0.0, 32.0));
+    eased_button(
+        ui,
+        button,
+        (palette.surface, palette.border),
+        (palette.surface_hover, palette.faint),
+        palette.text,
+    )
 }
 
-/// A square icon button with a soft background on hover.
+/// How far `response` is into its hovered look, eased over 120 ms.
+pub fn hover(ui: &Ui, response: &Response) -> f32 {
+    ui.ctx()
+        .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12)
+}
+
+/// A square icon button: its background fades in on hover and the glyph sinks a little while
+/// pressed.
 pub fn icon(ui: &mut Ui, glyph: &str, tooltip: &str, size: f32) -> Response {
-    let palette = palette(ui);
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
-    if response.hovered() || response.has_focus() {
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(8), palette.surface_hover);
-    }
-    let color = if response.hovered() {
-        palette.text
-    } else {
-        palette.muted
-    };
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        glyph,
-        FontId::proportional(size * 0.58),
-        color,
-    );
+    paint_icon(ui, &response, rect, glyph, 0.0);
     response.on_hover_text(tooltip)
 }
 
-/// A rounded status pill: colored dot and text.
-pub fn chip(ui: &mut Ui, color: Color32, text: &str) -> Response {
+/// How long a turning icon takes for one turn.
+const TURN: f64 = 0.7;
+
+/// An icon button whose glyph makes one eased turn when clicked (refresh).
+pub fn turning_icon(ui: &mut Ui, glyph: &str, tooltip: &str, size: f32) -> Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
+    let id = response.id.with("turn");
+    let now = ui.input(|input| input.time);
+    let mut started: Option<f64> = ui.data(|data| data.get_temp(id));
+    if started.is_none() && response.clicked() {
+        started = Some(now);
+        ui.data_mut(|data| data.insert_temp(id, now));
+    }
+    let mut angle = 0.0;
+    if let Some(at) = started {
+        let t = ((now - at) / TURN) as f32;
+        if t < 1.0 {
+            angle = egui::emath::easing::cubic_out(t) * std::f32::consts::TAU;
+            ui.ctx().request_repaint();
+        } else {
+            ui.data_mut(|data| data.remove::<f64>(id));
+        }
+    }
+    paint_icon(ui, &response, rect, glyph, angle);
+    response.on_hover_text(tooltip)
+}
+
+fn paint_icon(ui: &Ui, response: &Response, rect: Rect, glyph: &str, angle: f32) {
+    let palette = palette(ui);
+    let ctx = ui.ctx();
+    let hover = ctx.animate_bool_with_time(
+        response.id.with("hover"),
+        response.hovered() || response.has_focus(),
+        0.12,
+    );
+    let press = ctx.animate_bool_with_time(
+        response.id.with("press"),
+        response.is_pointer_button_down_on(),
+        0.08,
+    );
+    let painter = ui.painter();
+    if hover > 0.0 {
+        let fill = palette
+            .surface_hover
+            .lerp_to_gamma(palette.border, press * 0.7)
+            .gamma_multiply(hover);
+        painter.rect_filled(rect.shrink(press * 1.5), CornerRadius::same(8), fill);
+    }
+    let color = palette.icon.lerp_to_gamma(palette.text, hover);
+    let galley = painter.layout_no_wrap(
+        glyph.to_owned(),
+        FontId::proportional(rect.height() * 0.58),
+        color,
+    );
+    // Turn and scale about the middle of the glyph itself, not of its line box.
+    let center = rect.center();
+    let pivot = galley.mesh_bounds.center().to_vec2();
+    let mut shape = egui::epaint::TextShape::new(
+        center - egui::emath::Rot2::from_angle(angle) * pivot,
+        galley,
+        color,
+    )
+    .with_angle(angle);
+    let scale = 1.0 - 0.1 * press;
+    shape.transform(egui::emath::TSTransform::new(
+        center.to_vec2() * (1.0 - scale),
+        scale,
+    ));
+    painter.add(shape);
+}
+
+/// A rounded status pill: colored dot and text. The dot of a `busy` state (starting,
+/// stopping) breathes.
+pub fn chip(ui: &mut Ui, color: Color32, text: &str, busy: bool) -> Response {
     let font = FontId::proportional(12.0);
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
     let size = vec2(galley.size().x + 26.0, 22.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::same(11), color.gamma_multiply(0.14));
-    painter.circle_filled(pos2(rect.left() + 11.0, rect.center().y), 3.5, color);
+    let dot = pos2(rect.left() + 11.0, rect.center().y);
+    if busy {
+        let time = ui.input(|input| input.time);
+        let wave = (0.5 + 0.5 * (time * std::f64::consts::TAU / 1.4).sin()) as f32;
+        painter.circle_filled(
+            dot,
+            3.5 + 3.0 * wave,
+            color.gamma_multiply(0.35 * (1.0 - wave)),
+        );
+        painter.circle_filled(dot, 3.5, color.gamma_multiply(0.55 + 0.45 * wave));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(33));
+    } else {
+        painter.circle_filled(dot, 3.5, color);
+    }
     painter.galley(
         pos2(rect.left() + 19.0, rect.center().y - galley.size().y / 2.0),
         galley,
@@ -297,23 +419,33 @@ pub fn chip(ui: &mut Ui, color: Color32, text: &str) -> Response {
     response
 }
 
-/// A dark pill at the bottom of `rect`, over the device screen.
-pub fn toast(ui: &Ui, rect: Rect, text: &str) {
+/// A dark pill at the bottom of `rect`, over the device screen, at `opacity` (0 to 1) and
+/// rising into place as it appears.
+pub fn toast(ui: &Ui, rect: Rect, text: &str, opacity: f32) {
+    if opacity <= 0.0 {
+        return;
+    }
     let palette = palette(ui);
     let painter = ui.painter();
+    let white = Color32::WHITE.gamma_multiply(opacity);
     let galley = painter.layout(
         text.to_owned(),
         FontId::proportional(13.0),
-        Color32::WHITE,
+        white,
         (rect.width() - 48.0).max(120.0),
     );
     let size = galley.size() + vec2(28.0, 16.0);
+    let rise = 8.0 * (1.0 - opacity);
     let place = Rect::from_center_size(
-        pos2(rect.center().x, rect.bottom() - size.y / 2.0 - 20.0),
+        pos2(rect.center().x, rect.bottom() - size.y / 2.0 - 20.0 + rise),
         size,
     );
-    painter.rect_filled(place, CornerRadius::same(10), palette.overlay);
-    painter.galley(place.min + vec2(14.0, 8.0), galley, Color32::WHITE);
+    painter.rect_filled(
+        place,
+        CornerRadius::same(10),
+        palette.overlay.gamma_multiply(opacity),
+    );
+    painter.galley(place.min + vec2(14.0, 8.0), galley, white);
 }
 
 /// A device outline at the shape of its display (`panel`, natural orientation), fitted and
@@ -493,21 +625,25 @@ pub fn option_card(
     );
     let height = (22.0 + detail_galley.size().y + 26.0).max(62.0);
     let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
-    let hovered = response.hovered();
+    let hovered = hover(ui, &response);
+    let press = ui.ctx().animate_bool_with_time(
+        response.id.with("press"),
+        response.is_pointer_button_down_on(),
+        0.08,
+    );
     let painter = ui.painter();
-    let border = if hovered || recommended {
+    let border = if recommended {
         palette.accent
     } else {
-        palette.border
+        palette.border.lerp_to_gamma(palette.accent, hovered)
     };
+    let rect = rect.shrink(press * 1.5);
     painter.rect_filled(
         rect,
         CornerRadius::same(10),
-        if hovered {
-            palette.surface_hover
-        } else {
-            palette.surface
-        },
+        palette
+            .surface
+            .lerp_to_gamma(palette.surface_hover, hovered),
     );
     painter.rect_stroke(
         rect,
@@ -519,9 +655,11 @@ pub fn option_card(
     painter.circle_filled(
         icon,
         16.0,
-        palette
-            .accent
-            .gamma_multiply(if recommended { 0.25 } else { 0.12 }),
+        palette.accent.gamma_multiply(if recommended {
+            0.25
+        } else {
+            0.12 + 0.1 * hovered
+        }),
     );
     painter.text(
         icon,

@@ -48,6 +48,9 @@ const TOOLBAR: [Option<(&str, &str, Action)>; 13] = [
 /// Width of the toolbar panel, in points.
 pub const TOOLBAR_WIDTH: f32 = 44.0;
 
+/// How long a notice (screenshot saved, APK installed) stays over the screen, in seconds.
+const NOTICE_TIME: f32 = 4.0;
+
 pub struct EmulatorTab {
     pub avd: Avd,
     pub session: Session,
@@ -314,13 +317,13 @@ impl EmulatorTab {
                 input.raw.dropped_files.clone(),
             )
         });
-        if hovering {
-            theme::toast(
-                ui,
-                rect,
-                "Drop an APK to install it; other files go to /sdcard/Download",
-            );
-        }
+        let shown = ctx.animate_bool_with_time(ui.scope_id().with("drop-hint"), hovering, 0.15);
+        theme::toast(
+            ui,
+            rect,
+            "Drop an APK to install it; other files go to /sdcard/Download",
+            shown,
+        );
         for file in dropped {
             let path = file.path();
             if !path.as_os_str().is_empty() {
@@ -328,9 +331,16 @@ impl EmulatorTab {
             }
         }
         if let Some((text, since)) = &self.notice {
-            if since.elapsed().as_secs() < 4 {
-                theme::toast(ui, rect, text);
-                ctx.request_repaint_after(std::time::Duration::from_millis(500));
+            // Fades in, stays, fades out.
+            let age = since.elapsed().as_secs_f32();
+            if age < NOTICE_TIME {
+                let opacity = (age / 0.2).min((NOTICE_TIME - age) / 0.4).min(1.0);
+                theme::toast(ui, rect, text, opacity);
+                if opacity < 1.0 {
+                    ctx.request_repaint();
+                } else {
+                    ctx.request_repaint_after_secs(NOTICE_TIME - 0.4 - age);
+                }
             } else {
                 self.notice = None;
             }
@@ -345,7 +355,7 @@ impl EmulatorTab {
                 self.frame_size.0,
                 self.frame_size.1,
             );
-            theme::toast(ui, rect, &text);
+            theme::toast(ui, rect, &text, 1.0);
         }
         Some((
             (screen.width * pixels_per_point).round() as u32,

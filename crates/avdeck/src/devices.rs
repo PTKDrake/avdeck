@@ -79,7 +79,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, ctx: &egui::Context) {
                     if theme::primary(ui, format!("{}  Create device", icons::ADD)).clicked() {
                         app.dialog = Some(Dialog::Manage(Box::new(manage::Dialog::create(app))));
                     }
-                    if theme::icon(ui, icons::REFRESH, "Refresh", 32.0).clicked() {
+                    if theme::turning_icon(ui, icons::REFRESH, "Refresh", 32.0).clicked() {
                         app.rescan(true);
                     }
                     ui.add(
@@ -167,14 +167,18 @@ fn card(app: &mut App, ui: &mut egui::Ui, ctx: &egui::Context, avd: &Avd, width:
         ui.cursor().min,
         vec2(width, CARD_HEIGHT),
     ));
+    let hover = ctx.animate_bool_with_time(egui::Id::unique(("card", &avd.id)), hovered, 0.15);
     let frame = theme::card(ui).stroke(Stroke::new(
         1.0,
-        if hovered {
-            palette.faint
-        } else {
-            palette.border
-        },
+        palette.border.lerp_to_gamma(palette.faint, hover),
     ));
+    // Lifts a little under the pointer.
+    let frame = frame.shadow(egui::Shadow {
+        offset: [0, 4],
+        blur: 14,
+        spread: 0,
+        color: palette.shadow.gamma_multiply(0.6 * hover),
+    });
     frame.show(ui, |ui| {
         ui.set_width(width - 30.0);
         ui.set_height(CARD_HEIGHT - 30.0);
@@ -217,7 +221,8 @@ fn card(app: &mut App, ui: &mut egui::Ui, ctx: &egui::Context, avd: &Avd, width:
             Status::NotResponding => ("Not responding", palette.danger),
             Status::Stopped => ("Stopped", palette.faint),
         };
-        let chip = theme::chip(ui, color, text);
+        let busy = matches!(state, Status::Tab(Phase::Starting) | Status::Stopping);
+        let chip = theme::chip(ui, color, text, busy);
         if matches!(state, Status::Outside) {
             chip.on_hover_text(
                 "Started without gRPC (Android Studio or a script), so Avdeck cannot show it. \
