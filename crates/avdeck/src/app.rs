@@ -46,6 +46,12 @@ enum Layout {
     },
 }
 
+/// An emulator asked to stop, until its process is gone.
+pub struct Stopping {
+    pub pid: u32,
+    pub since: Instant,
+}
+
 #[derive(Default)]
 struct Fit {
     layout: Option<Layout>,
@@ -73,6 +79,10 @@ pub struct App {
     pub settings: SettingsForm,
     /// Filter on the Devices page.
     pub search: String,
+    /// Emulators asked to stop, by AVD id.
+    pub stopping: std::collections::HashMap<String, Stopping>,
+    /// AVDs to start as soon as their previous process is gone.
+    start_when_stopped: std::collections::HashSet<String>,
     /// Remember the choice in the close dialogs.
     remember: bool,
     /// Ctrl+Shift+D: DPI, sizes and frame rate over the screen.
@@ -105,6 +115,8 @@ impl App {
             dialog: None,
             settings,
             search: String::new(),
+            stopping: Default::default(),
+            start_when_stopped: Default::default(),
             remember: false,
             debug: false,
             closing: false,
@@ -131,6 +143,8 @@ impl App {
         if force || due(self.scanned_live, 1) {
             self.live = running::live();
             self.scanned_live = Some(Instant::now());
+            self.stopping
+                .retain(|_, stopping| running::alive(stopping.pid));
         }
         if force || due(self.scanned_avds, 5) {
             self.avds = self
@@ -232,8 +246,16 @@ impl App {
             .find(|avd| avd.id == id)
             .cloned()
             .context("no such AVD")?;
-        if self.live_any(id).is_some() {
-            anyhow::bail!("it is already running without gRPC; stop it first");
+        if let Some(running) = self.live_any(id) {
+            if running.grpc_port.is_some() {
+                anyhow::bail!(
+                    "it is already running; open it from Devices, or stop it there first"
+                );
+            }
+            anyhow::bail!(
+                "it is already running without gRPC (Android Studio or a script started it); \
+                 stop it first"
+            );
         }
         // Ports of emulators that are starting but have not written their discovery file yet
         // are bound already, so a bind test covers them.
@@ -260,15 +282,51 @@ impl App {
         Ok(())
     }
 
-    /// Stops the emulator of `id` (saving its snapshot) and closes its tab.
+    /// Stops the emulator of `id` and closes its tab: a clean shutdown over gRPC (it saves its
+    /// state), then the console's `kill` if it is still there after 15 s. The Devices page shows
+    /// it as stopping, and offers Force stop once it has not exited after 40 s.
     pub fn stop(&mut self, id: &str) {
-        let port = self
+        let running = self.live_any(id).cloned();
+        let pid = self
+            .tab(id)
+            .and_then(|tab| tab.pid())
+            .or(running.as_ref().map(|running| running.pid));
+        let grpc = running
+            .as_ref()
+            .and_then(|running| Some((running.grpc_port?, running.grpc_token.clone())));
+        let console = self
             .tab(id)
             .and_then(|tab| tab.console_port())
-            .or_else(|| self.live_any(id).and_then(|running| running.console_port));
+            .or(running.as_ref().and_then(|running| running.console_port));
         self.close_tab(id);
-        if let Some(port) = port {
-            self.runtime.spawn_blocking(move || console::kill(port));
+        let Some(pid) = pid else { return };
+        self.stopping.insert(
+            id.to_owned(),
+            Stopping {
+                pid,
+                since: Instant::now(),
+            },
+        );
+        self.runtime.spawn(async move {
+            if let Some((port, token)) = grpc {
+                crate::session::shutdown(port, token).await;
+            }
+            for _ in 0..15 {
+                if !running::alive(pid) {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            if let Some(port) = console {
+                let _ = tokio::task::spawn_blocking(move || console::kill(port)).await;
+            }
+        });
+    }
+
+    /// Ends an emulator that did not stop, without saving its state.
+    pub fn force_stop(&mut self, id: &str) {
+        if let Some(stopping) = self.stopping.get(id) {
+            running::terminate(stopping.pid);
         }
         self.scanned_live = None;
     }
@@ -342,17 +400,29 @@ impl App {
         }
     }
 
+    /// Asks every open emulator to shut down, waiting at most 5 s: the app is about to exit.
     fn stop_all(&mut self) {
-        let ports: Vec<u16> = self
+        let targets: Vec<(u16, Option<String>)> = self
             .tabs
             .iter()
-            .filter_map(|tab| tab.console_port())
+            .filter_map(|tab| {
+                let running = self.live_any(&tab.avd.id)?;
+                Some((running.grpc_port?, running.grpc_token.clone()))
+            })
             .collect();
         self.tabs.clear();
-        // Blocking on purpose: the process is about to exit.
-        for port in ports {
-            let _ = console::kill(port);
-        }
+        self.runtime.block_on(async {
+            let tasks: Vec<_> = targets
+                .into_iter()
+                .map(|(port, token)| tokio::spawn(crate::session::shutdown(port, token)))
+                .collect();
+            let _ = tokio::time::timeout(Duration::from_secs(5), async {
+                for task in tasks {
+                    let _ = task.await;
+                }
+            })
+            .await;
+        });
     }
 
     fn close_app(&mut self, ctx: &egui::Context, stop: bool) {
@@ -847,11 +917,44 @@ impl eframe::App for App {
             .filter_map(|tab| Some((tab.avd.id.clone(), tab.request.take()?)))
             .collect();
         for (id, request) in requests {
+            let pid = self.tab(&id).and_then(|tab| tab.pid());
             self.close_tab(&id);
-            if matches!(request, crate::tab::Request::Restart) {
-                self.rescan(true);
-                self.open(&ctx, &id);
+            match request {
+                crate::tab::Request::Close => {}
+                crate::tab::Request::Restart => {
+                    self.rescan(true);
+                    self.open(&ctx, &id);
+                }
+                // The process lives on without answering: end it, start once it is gone.
+                crate::tab::Request::ForceRestart => {
+                    if let Some(pid) = pid {
+                        running::terminate(pid);
+                        self.stopping.insert(
+                            id.clone(),
+                            Stopping {
+                                pid,
+                                since: Instant::now(),
+                            },
+                        );
+                    }
+                    self.start_when_stopped.insert(id);
+                }
             }
+        }
+        // Starts waiting for their old process to go.
+        let ready: Vec<String> = self
+            .start_when_stopped
+            .iter()
+            .filter(|id| !self.stopping.contains_key(*id) && self.live_any(id).is_none())
+            .cloned()
+            .collect();
+        for id in ready {
+            self.start_when_stopped.remove(&id);
+            let options = self.config.launch.clone();
+            self.start(&ctx, &id, &options);
+        }
+        if !self.start_when_stopped.is_empty() {
+            ctx.request_repaint_after(Duration::from_millis(500));
         }
         // Only the shown tab streams frames.
         let previous_extended = extended::docked_pid();

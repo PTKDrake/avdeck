@@ -198,19 +198,55 @@ async fn discover(port: u16) -> Result<running::Running> {
     }
 }
 
+/// Asks the emulator on gRPC `port` to shut down cleanly, like closing its window: it saves the
+/// quick-boot snapshot unless started with `-no-snapshot-save`. Returns once the request is out
+/// (the call itself often never answers: the emulator goes away).
+pub async fn shutdown(port: u16, token: Option<String>) {
+    use avdeck_grpc::control::VmRunState;
+    use avdeck_grpc::control::vm_run_state::RunState;
+    let auth = match token.as_deref().map(Auth::bearer) {
+        Some(Ok(auth)) => auth,
+        _ => Auth::none(),
+    };
+    let Ok(Ok(mut emulator)) =
+        tokio::time::timeout(Duration::from_secs(3), Emulator::connect(port, auth)).await
+    else {
+        return;
+    };
+    let request = VmRunState {
+        state: RunState::Shutdown as i32,
+    };
+    let _ = tokio::time::timeout(
+        Duration::from_secs(3),
+        emulator.controller.set_vm_state(request),
+    )
+    .await;
+}
+
 async fn connect(port: u16, instance: &running::Running) -> Result<Emulator> {
     let auth = match &instance.grpc_token {
         Some(token) => Auth::bearer(token)?,
         None => Auth::none(),
     };
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         match Emulator::connect(port, auth.clone()).await {
-            Ok(mut emulator) => match emulator.controller.get_status(()).await {
+            // A hung emulator accepts the connection but never answers.
+            Ok(mut emulator) => match tokio::time::timeout(
+                Duration::from_secs(5),
+                emulator.controller.get_status(()),
+            )
+            .await
+            .unwrap_or_else(|_| Err(tonic::Status::deadline_exceeded("no answer in 5 s")))
+            {
                 Ok(_) => return Ok(emulator),
                 // The message of an auth failure echoes the token: report only the code.
                 Err(status) if Instant::now() > deadline => {
-                    bail!("gRPC on port {port} answered {:?}", status.code())
+                    bail!(
+                        "The emulator does not answer (gRPC on port {port}: {:?}). It may be \
+                         hung: stop it from Devices, then Force stop.",
+                        status.code()
+                    )
                 }
                 Err(_) => {}
             },

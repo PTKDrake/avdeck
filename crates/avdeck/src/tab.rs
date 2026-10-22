@@ -79,6 +79,8 @@ pub struct EmulatorTab {
 
 pub enum Request {
     Restart,
+    /// End the process that no longer answers, then start again.
+    ForceRestart,
     Close,
 }
 
@@ -383,22 +385,45 @@ impl EmulatorTab {
                 ));
             }
             Phase::Ended(reason) => {
+                // Still running but not answering: hung. Starting again means ending it first.
+                let hung = self.pid().is_some_and(avdeck_core::running::alive);
                 column.label(
                     egui::RichText::new(icons::WARNING)
                         .size(26.0)
                         .color(palette.danger),
                 );
-                column.label(theme::title("Not connected", 15.0));
-                column.label(theme::muted(&column, reason));
-                column.add_space(6.0);
-                column.horizontal(|ui| {
-                    if theme::primary(ui, format!("{}  Start again", icons::START)).clicked() {
-                        self.request = Some(Request::Restart);
+                if hung {
+                    column.label(theme::title("Not responding", 15.0));
+                    column
+                        .label(theme::muted(
+                            &column,
+                            "The emulator is still running but stopped answering.",
+                        ))
+                        .on_hover_text(&reason);
+                } else {
+                    column.label(theme::title("Not connected", 15.0));
+                    column.label(theme::muted(&column, reason.as_str()));
+                }
+                column.add_space(8.0);
+                // One centered button per line.
+                if hung {
+                    if theme::danger(&mut column, "Force stop and start again")
+                        .on_hover_text("Ends the hung emulator; its unsaved state is lost")
+                        .clicked()
+                    {
+                        self.request = Some(Request::ForceRestart);
                     }
-                    if theme::secondary(ui, "Close tab").clicked() {
-                        self.request = Some(Request::Close);
-                    }
-                });
+                } else if theme::primary(&mut column, format!("{}  Start again", icons::START))
+                    .clicked()
+                {
+                    self.request = Some(Request::Restart);
+                }
+                if column
+                    .add(egui::Button::new("Close tab").frame(false))
+                    .clicked()
+                {
+                    self.request = Some(Request::Close);
+                }
             }
         }
     }

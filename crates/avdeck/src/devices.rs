@@ -16,17 +16,33 @@ enum Status {
     Headless,
     /// Running without gRPC (started elsewhere): can only be stopped.
     Outside,
+    /// Asked to stop, still running.
+    Stopping,
+    /// Asked to stop 40 s ago and still running: it no longer answers.
+    NotResponding,
     Stopped,
 }
 
 impl Status {
     fn running(&self) -> bool {
-        !matches!(self, Status::Stopped | Status::Tab(Phase::Ended(_)))
+        !matches!(
+            self,
+            Status::Stopped
+                | Status::Tab(Phase::Ended(_))
+                | Status::Stopping
+                | Status::NotResponding
+        )
     }
 }
 
 fn status(app: &App, avd: &Avd) -> Status {
-    if let Some(tab) = app.tab(&avd.id) {
+    if let Some(stopping) = app.stopping.get(&avd.id) {
+        if stopping.since.elapsed().as_secs() >= 40 {
+            Status::NotResponding
+        } else {
+            Status::Stopping
+        }
+    } else if let Some(tab) = app.tab(&avd.id) {
         Status::Tab(tab.phase())
     } else if app.live_grpc(&avd.id).is_some() {
         Status::Headless
@@ -197,6 +213,8 @@ fn card(app: &mut App, ui: &mut egui::Ui, ctx: &egui::Context, avd: &Avd, width:
             Status::Tab(Phase::Ended(_)) => ("Disconnected", palette.danger),
             Status::Headless => ("Running in background", palette.success),
             Status::Outside => ("Running outside Avdeck", palette.accent),
+            Status::Stopping => ("Stopping…", palette.warning),
+            Status::NotResponding => ("Not responding", palette.danger),
             Status::Stopped => ("Stopped", palette.faint),
         };
         let chip = theme::chip(ui, color, text);
@@ -209,10 +227,20 @@ fn card(app: &mut App, ui: &mut egui::Ui, ctx: &egui::Context, avd: &Avd, width:
 
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             ui.horizontal(|ui| {
+                if matches!(state, Status::NotResponding)
+                    && theme::danger(ui, "Force stop")
+                        .on_hover_text("End the emulator process now; unsaved state is lost")
+                        .clicked()
+                {
+                    app.force_stop(&avd.id);
+                }
+                if matches!(state, Status::Stopping) {
+                    ui.spinner();
+                }
                 let main = match state {
                     Status::Tab(_) => Some("Show".to_owned()),
                     Status::Headless => Some("Open".to_owned()),
-                    Status::Outside => None,
+                    Status::Outside | Status::Stopping | Status::NotResponding => None,
                     Status::Stopped => Some(format!("{}  Start", icons::START)),
                 };
                 if let Some(label) = main
@@ -220,7 +248,10 @@ fn card(app: &mut App, ui: &mut egui::Ui, ctx: &egui::Context, avd: &Avd, width:
                 {
                     app.open(ctx, &avd.id);
                 }
-                if (state.running() || matches!(state, Status::Outside))
+                // A tab that lost its emulator while the process lives on (hung): still stoppable.
+                let alive = app.live_any(&avd.id).is_some();
+                if (state.running() || matches!(state, Status::Outside) || alive)
+                    && !matches!(state, Status::Stopping | Status::NotResponding)
                     && theme::secondary(ui, format!("{}  Stop", icons::STOP))
                         .on_hover_text("Stop and save the device state")
                         .clicked()
@@ -229,7 +260,7 @@ fn card(app: &mut App, ui: &mut egui::Ui, ctx: &egui::Context, avd: &Avd, width:
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let more = theme::icon(ui, icons::MORE, "More", 32.0);
-                    let running = !matches!(state, Status::Stopped);
+                    let running = !matches!(state, Status::Stopped | Status::NotResponding);
                     egui::Popup::menu(&more).show(|ui| {
                         ui.set_min_width(210.0);
                         menu(app, ui, ctx, avd, running);

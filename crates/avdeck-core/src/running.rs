@@ -94,6 +94,20 @@ pub fn alive(pid: u32) -> bool {
     ok && code == STILL_ACTIVE as u32
 }
 
+/// Ends the process at once, without letting it save anything. For an emulator that no longer
+/// answers its console or gRPC.
+pub fn terminate(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
+    let process = unsafe { OpenProcess(PROCESS_TERMINATE, 0, pid) };
+    if process.is_null() {
+        return false;
+    }
+    let ok = unsafe { TerminateProcess(process, 1) } != 0;
+    unsafe { CloseHandle(process) };
+    ok
+}
+
 /// Discovery files of emulators that are still running.
 pub fn live() -> Vec<Running> {
     list()
