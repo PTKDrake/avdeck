@@ -240,19 +240,126 @@ pub fn duplicate(home: &Path, avd: &Avd, id: &str, name: &str) -> std::io::Resul
     Avd::read(home, id).ok_or_else(|| std::io::Error::other("the copy cannot be read"))
 }
 
-/// Device profile ids from `avdmanager list device -c`, skipping warnings.
-pub fn device_ids(output: &str) -> Vec<String> {
-    output
-        .lines()
-        .map(str::trim)
-        .filter(|line| {
-            !line.is_empty()
-                && !line.contains(' ')
-                && !line.starts_with("Warning")
-                && !line.starts_with("Error")
-        })
-        .map(str::to_owned)
-        .collect()
+/// A hardware profile `avdmanager create avd -d` accepts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeviceProfile {
+    pub id: String,
+    /// `Pixel 10 Pro`, `Wear OS Large Round`, ...
+    pub name: String,
+    pub oem: String,
+    /// `android-wear`, `android-tv`, ...; none for phones and tablets.
+    pub tag: Option<String>,
+}
+
+/// The groups the device list is shown in, in order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DeviceGroup {
+    Pixel,
+    PhonesAndTablets,
+    WearOs,
+    Tv,
+    Automotive,
+    Desktop,
+    XrAndGlasses,
+    Older,
+}
+
+impl DeviceGroup {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Pixel => "Pixel",
+            Self::PhonesAndTablets => "Phones and tablets",
+            Self::WearOs => "Wear OS",
+            Self::Tv => "TV",
+            Self::Automotive => "Automotive",
+            Self::Desktop => "Desktop",
+            Self::XrAndGlasses => "XR and glasses",
+            Self::Older => "Older devices",
+        }
+    }
+}
+
+impl DeviceProfile {
+    pub fn group(&self) -> DeviceGroup {
+        let tag = self.tag.as_deref().unwrap_or_default();
+        if tag.starts_with("android-wear") {
+            DeviceGroup::WearOs
+        } else if tag.starts_with("android-tv") {
+            DeviceGroup::Tv
+        } else if tag.starts_with("android-automotive") {
+            DeviceGroup::Automotive
+        } else if tag.starts_with("android-desktop") {
+            DeviceGroup::Desktop
+        } else if tag.starts_with("android-xr") || tag.contains("glasses") {
+            DeviceGroup::XrAndGlasses
+        } else if self.id == "pixel" || self.id.starts_with("pixel_") {
+            DeviceGroup::Pixel
+        } else if self.id.starts_with("Nexus") || self.id.contains("in ") || self.oem.is_empty() {
+            DeviceGroup::Older
+        } else {
+            DeviceGroup::PhonesAndTablets
+        }
+    }
+
+    /// The Pixel generation (`pixel_10_pro` -> 10), for newest-first ordering.
+    fn generation(&self) -> u32 {
+        self.id
+            .strip_prefix("pixel_")
+            .and_then(|rest| {
+                let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+                digits.parse().ok()
+            })
+            .unwrap_or(0)
+    }
+}
+
+/// Profiles from `avdmanager list device` (blocks of `id: N or "id"`, `Name:`, `OEM :`, `Tag :`).
+pub fn device_profiles(output: &str) -> Vec<DeviceProfile> {
+    let mut profiles: Vec<DeviceProfile> = Vec::new();
+    for line in output.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("id:") {
+            let Some(id) = rest.split('"').nth(1) else {
+                continue;
+            };
+            profiles.push(DeviceProfile {
+                id: id.to_owned(),
+                name: id.to_owned(),
+                oem: String::new(),
+                tag: None,
+            });
+        } else if let Some(profile) = profiles.last_mut()
+            && let Some((key, value)) = line.split_once(':')
+        {
+            let value = value.trim().to_owned();
+            match key.trim() {
+                "Name" => profile.name = value,
+                "OEM" => profile.oem = value,
+                "Tag" => profile.tag = Some(value).filter(|tag| !tag.is_empty()),
+                _ => {}
+            }
+        }
+    }
+    profiles
+}
+
+/// Profiles by group: Pixels newest first, the rest by name.
+pub fn grouped(profiles: &[DeviceProfile]) -> Vec<(DeviceGroup, Vec<DeviceProfile>)> {
+    let mut groups: Vec<(DeviceGroup, Vec<DeviceProfile>)> = Vec::new();
+    let mut sorted = profiles.to_vec();
+    sorted.sort_by(|a, b| {
+        a.group()
+            .cmp(&b.group())
+            .then_with(|| b.generation().cmp(&a.generation()))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    for profile in sorted {
+        match groups.last_mut() {
+            Some((group, members)) if *group == profile.group() => members.push(profile),
+            _ => groups.push((profile.group(), vec![profile])),
+        }
+    }
+    groups
 }
 
 #[cfg(test)]
@@ -398,12 +505,81 @@ target=android-37.2
         fs::remove_dir_all(&home).unwrap();
     }
 
+    /// Trimmed `avdmanager list device` from cmdline-tools 19.
+    const DEVICES: &str = r#"Available devices definitions:
+id: 0 or "ai_glasses_displayless"
+    Name: Audio Glasses
+    OEM : Google
+    Tag : ai-glasses
+---------
+id: 1 or "automotive_1024p_landscape"
+    Name: Automotive (1024p landscape)
+    OEM : Google
+    Tag : android-automotive-playstore
+---------
+id: 19 or "Nexus 5"
+    Name: Nexus 5
+    OEM : Google
+---------
+id: 29 or "pixel_10"
+    Name: Pixel 10
+    OEM : Google
+---------
+id: 30 or "pixel_10_pro"
+    Name: Pixel 10 Pro
+    OEM : Google
+---------
+id: 53 or "pixel_9"
+    Name: Pixel 9
+    OEM : Google
+---------
+id: 60 or "pixel_tablet"
+    Name: Pixel Tablet
+    OEM : Google
+---------
+id: 64 or "small_phone"
+    Name: Small Phone
+    OEM : Generic
+---------
+id: 69 or "wearos_large_round"
+    Name: Wear OS Large Round
+    OEM : Google
+    Tag : android-wear
+---------
+id: 76 or "2.7in QVGA"
+    Name: 2.7" QVGA
+    OEM : Generic
+"#;
+
     #[test]
-    fn reads_device_ids() {
-        let output = "Warning: Mapping new ns to old ns\nautomotive_1024p_landscape\npixel_10_pro\nmedium_phone\n";
+    fn groups_device_profiles_with_pixels_newest_first() {
+        let profiles = device_profiles(DEVICES);
+        assert_eq!(profiles.len(), 10);
+        assert_eq!(profiles[2].id, "Nexus 5");
+        assert_eq!(profiles[3].name, "Pixel 10");
         assert_eq!(
-            device_ids(output),
-            ["automotive_1024p_landscape", "pixel_10_pro", "medium_phone"]
+            profiles[1].tag.as_deref(),
+            Some("android-automotive-playstore")
         );
+        let summary: Vec<(DeviceGroup, Vec<String>)> = grouped(&profiles)
+            .into_iter()
+            .map(|(group, members)| (group, members.into_iter().map(|p| p.id).collect()))
+            .collect();
+        let expected: Vec<(DeviceGroup, Vec<&str>)> = vec![
+            (
+                DeviceGroup::Pixel,
+                vec!["pixel_10", "pixel_10_pro", "pixel_9", "pixel_tablet"],
+            ),
+            (DeviceGroup::PhonesAndTablets, vec!["small_phone"]),
+            (DeviceGroup::WearOs, vec!["wearos_large_round"]),
+            (DeviceGroup::Automotive, vec!["automotive_1024p_landscape"]),
+            (DeviceGroup::XrAndGlasses, vec!["ai_glasses_displayless"]),
+            (DeviceGroup::Older, vec!["2.7in QVGA", "Nexus 5"]),
+        ];
+        let expected: Vec<(DeviceGroup, Vec<String>)> = expected
+            .into_iter()
+            .map(|(group, ids)| (group, ids.into_iter().map(str::to_owned).collect()))
+            .collect();
+        assert_eq!(summary, expected);
     }
 }

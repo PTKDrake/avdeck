@@ -84,12 +84,14 @@ pub struct Create {
     id: String,
     /// The id was typed, not derived from the name.
     id_edited: bool,
-    devices: Vec<String>,
-    devices_job: Option<Job<Vec<String>>>,
+    devices: Vec<avd::DeviceProfile>,
+    devices_job: Option<Job<Vec<avd::DeviceProfile>>>,
     device: String,
     installed: Vec<SystemImage>,
     available: Vec<SystemImage>,
     available_job: Option<Job<Vec<SystemImage>>>,
+    /// sdkmanager answered (`available` may be empty because everything is installed).
+    available_loaded: bool,
     install_job: Option<Job<()>>,
     image: Option<String>,
     ram_mb: u32,
@@ -134,11 +136,12 @@ impl Dialog {
             id_edited: false,
             devices: Vec::new(),
             devices_job: None,
-            device: "pixel_9".to_owned(),
+            device: String::new(),
             image: installed.first().map(|image| image.package.clone()),
             installed,
             available: Vec::new(),
             available_job: None,
+            available_loaded: false,
             install_job: None,
             ram_mb: 4096,
             storage_gb: 16,
@@ -414,6 +417,30 @@ pub fn show(app: &mut App, ctx: &egui::Context, dialog: Dialog) -> Option<Dialog
     }
 }
 
+/// RAM in common sizes; an unusual value from config.ini stays selectable.
+fn memory(ui: &mut egui::Ui, id: &str, ram_mb: &mut u32, width: f32) {
+    let text = |mb: u32| {
+        if mb.is_multiple_of(1024) {
+            format!("{} GB", mb / 1024)
+        } else {
+            format!("{mb} MB")
+        }
+    };
+    let mut sizes = vec![2048, 3072, 4096, 6144, 8192, 12288, 16384];
+    if !sizes.contains(ram_mb) {
+        sizes.push(*ram_mb);
+        sizes.sort_unstable();
+    }
+    egui::ComboBox::new(id, "")
+        .selected_text(text(*ram_mb))
+        .width(width)
+        .show_ui(ui, |ui| {
+            for mb in sizes {
+                ui.selectable_value(ram_mb, mb, text(mb));
+            }
+        });
+}
+
 fn error_line(ui: &mut egui::Ui, error: &Option<String>) {
     if let Some(error) = error {
         ui.label(
@@ -444,22 +471,35 @@ fn create_dialog(app: &mut App, ctx: &egui::Context, mut form: Box<Create>) -> O
     if form.devices.is_empty() && form.devices_job.is_none() {
         let (tool_path, env) = (avdmanager.clone(), env.clone());
         form.devices_job = Some(Job::spawn(ctx, move |_| {
-            tool::run(&tool_path, &["list", "device", "-c"], &env, "")
-                .map(|output| avd::device_ids(&output))
+            tool::run(&tool_path, &["list", "device"], &env, "")
+                .map(|output| avd::device_profiles(&output))
                 .map_err(|error| error.to_string())
         }));
     }
     if let Some(result) = form.devices_job.as_ref().and_then(Job::take) {
         form.devices_job = None;
         match result {
-            Ok(devices) => form.devices = devices,
+            Ok(devices) => {
+                // Default to the newest Pixel.
+                if !devices.iter().any(|device| device.id == form.device) {
+                    form.device = avd::grouped(&devices)
+                        .first()
+                        .and_then(|(_, members)| members.first())
+                        .map(|device| device.id.clone())
+                        .unwrap_or_default();
+                }
+                form.devices = devices;
+            }
             Err(message) => form.error = Some(message),
         }
     }
     if let Some(result) = form.available_job.as_ref().and_then(Job::take) {
         form.available_job = None;
         match result {
-            Ok(available) => form.available = available,
+            Ok(available) => {
+                form.available = available;
+                form.available_loaded = true;
+            }
             Err(message) => form.error = Some(message),
         }
     }
@@ -492,13 +532,22 @@ fn create_dialog(app: &mut App, ctx: &egui::Context, mut form: Box<Create>) -> O
     modal(ctx, "create", |ui| {
         ui.set_min_width(520.0);
         ui.label(theme::title("Create device", 18.0));
+        // One width for every field; labels in a fixed column.
+        const LABEL: f32 = 104.0;
+        let field = (ui.available_width() - LABEL - 12.0).max(200.0);
         egui::Grid::new("create-form")
             .num_columns(2)
-            .spacing([12.0, 8.0])
+            .spacing([12.0, 10.0])
+            .min_col_width(LABEL)
             .show(ui, |ui| {
                 ui.label("Name");
                 if ui
-                    .add(egui::TextEdit::singleline(&mut form.name).hint_text("Pixel 9 API 36"))
+                    .add(
+                        egui::TextEdit::singleline(&mut form.name)
+                            .hint_text("Pixel 10 API 37")
+                            .desired_width(field)
+                            .margin(egui::Margin::symmetric(10, 7)),
+                    )
                     .changed()
                     && !form.id_edited
                 {
@@ -506,93 +555,136 @@ fn create_dialog(app: &mut App, ctx: &egui::Context, mut form: Box<Create>) -> O
                 }
                 ui.end_row();
                 ui.label("Id");
-                if ui.text_edit_singleline(&mut form.id).changed() {
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut form.id)
+                            .hint_text("made from the name")
+                            .desired_width(field)
+                            .margin(egui::Margin::symmetric(10, 7)),
+                    )
+                    .changed()
+                {
                     form.id_edited = true;
                 }
                 ui.end_row();
 
                 ui.label("Device");
-                ui.horizontal(|ui| {
-                    egui::ComboBox::new("create-device", "")
-                        .selected_text(&form.device)
-                        .height(320.0)
-                        .show_ui(ui, |ui| {
-                            for device in form.devices.clone() {
-                                ui.selectable_value(&mut form.device, device.clone(), device);
-                            }
-                        });
+                let selected = form
+                    .devices
+                    .iter()
+                    .find(|device| device.id == form.device)
+                    .map_or(form.device.clone(), |device| device.name.clone());
+                let choices: Vec<theme::Choice<String>> = avd::grouped(&form.devices)
+                    .into_iter()
+                    .flat_map(|(group, members)| {
+                        members.into_iter().map(move |device| theme::Choice {
+                            label: device.name.clone(),
+                            hover: device.id.clone(),
+                            value: device.id,
+                            group: Some(group.title()),
+                        })
+                    })
+                    .collect();
+                theme::searchable_combo(
+                    ui,
+                    "create-device",
                     if form.devices_job.is_some() {
-                        ui.spinner();
-                    }
-                });
+                        "Loading devices…".to_owned()
+                    } else {
+                        selected
+                    },
+                    field,
+                    &choices,
+                    &mut form.device,
+                );
                 ui.end_row();
 
                 ui.label("System image");
                 ui.vertical(|ui| {
-                    let selected = form
-                        .image
-                        .clone()
-                        .unwrap_or_else(|| "none installed".to_owned());
-                    egui::ComboBox::new("create-image", "")
-                        .selected_text(short(&selected))
-                        .width(360.0)
-                        .show_ui(ui, |ui| {
-                            for image in form.installed.clone() {
-                                let label = format!(
-                                    "API {}  ·  {}  ·  {}",
-                                    image.api(),
-                                    image.tag(),
-                                    image.abi()
-                                );
-                                ui.selectable_value(
-                                    &mut form.image,
-                                    Some(image.package.clone()),
-                                    label,
-                                )
-                                .on_hover_text(&image.description);
-                            }
-                        });
-                    match (&form.install_job, &form.available_job) {
-                        (Some(job), _) => {
-                            ui.horizontal(|ui| {
-                                ui.spinner();
-                                let text = images::progress(&job.progress())
-                                    .map_or("Installing…".to_owned(), |(percent, what)| {
-                                        format!("{percent}%  {what}")
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        let selected = form
+                            .image
+                            .clone()
+                            .unwrap_or_else(|| "none installed".to_owned());
+                        let choices: Vec<theme::Choice<Option<String>>> = form
+                            .installed
+                            .iter()
+                            .map(|image| theme::Choice {
+                                value: Some(image.package.clone()),
+                                label: short(&image.package),
+                                hover: image.description.clone(),
+                                group: None,
+                            })
+                            .collect();
+                        // Leave room for the 32 pt icon and the 6 pt gap.
+                        theme::searchable_combo(
+                            ui,
+                            "create-image",
+                            short(&selected),
+                            field - 38.0,
+                            &choices,
+                            &mut form.image,
+                        );
+                        // More images from sdkmanager, listed on demand.
+                        let download =
+                            theme::icon(ui, icons::DOWNLOAD, "Download more images", 32.0);
+                        if download.clicked()
+                            && !form.available_loaded
+                            && form.available_job.is_none()
+                        {
+                            let (tool_path, env, installed) =
+                                (sdkmanager.clone(), env.clone(), form.installed.clone());
+                            form.available_job = Some(Job::spawn(ctx, move |_| {
+                                tool::run(&tool_path, &["--list"], &env, "")
+                                    .map(|output| images::available(&output, &installed))
+                                    .map_err(|error| error.to_string())
+                            }));
+                        }
+                        let menu = egui::Popup::menu(&download).show(|ui| {
+                            theme::menu(ui, 420.0, |ui| {
+                                if form.available_job.is_some() {
+                                    ui.horizontal(|ui| {
+                                        ui.spinner();
+                                        ui.label(theme::muted(ui, "Asking sdkmanager…"));
                                     });
-                                ui.label(RichText::new(text).small());
-                            });
-                        }
-                        (None, Some(_)) => {
-                            ui.horizontal(|ui| {
-                                ui.spinner();
-                                ui.label(RichText::new("Asking sdkmanager for images…").small());
-                            });
-                        }
-                        (None, None) if form.available.is_empty() => {
-                            if ui
-                                .small_button(format!("{}  Download more images…", icons::DOWNLOAD))
-                                .clicked()
-                            {
-                                let (tool_path, env, installed) =
-                                    (sdkmanager.clone(), env.clone(), form.installed.clone());
-                                form.available_job = Some(Job::spawn(ctx, move |_| {
-                                    tool::run(&tool_path, &["--list"], &env, "")
-                                        .map(|output| images::available(&output, &installed))
-                                        .map_err(|error| error.to_string())
-                                }));
-                            }
-                        }
-                        (None, None) => {
-                            egui::ScrollArea::vertical()
-                                .max_height(140.0)
-                                .show(ui, |ui| {
-                                    for image in form.available.clone() {
-                                        ui.horizontal(|ui| {
-                                            if ui
-                                                .small_button(icons::DOWNLOAD)
-                                                .on_hover_text("Install")
-                                                .clicked()
+                                } else if form.available.is_empty() {
+                                    ui.label(theme::muted(ui, "Every image is installed."));
+                                }
+                                let search = egui::Id::unique("create-download-search");
+                                let query = if form.available.is_empty() {
+                                    String::new()
+                                } else {
+                                    theme::search_box(ui, search)
+                                };
+                                egui::ScrollArea::vertical()
+                                    .max_height(320.0)
+                                    .min_scrolled_height(if form.available.is_empty() {
+                                        0.0
+                                    } else {
+                                        320.0
+                                    })
+                                    .show(ui, |ui| {
+                                        for image in
+                                            form.available.clone().into_iter().filter(|image| {
+                                                query.is_empty()
+                                                    || short(&image.package)
+                                                        .to_lowercase()
+                                                        .contains(&query)
+                                                    || image
+                                                        .description
+                                                        .to_lowercase()
+                                                        .contains(&query)
+                                            })
+                                        {
+                                            if theme::menu_item(
+                                                ui,
+                                                icons::DOWNLOAD,
+                                                &short(&image.package),
+                                                form.install_job.is_none(),
+                                            )
+                                            .on_hover_text(&image.description)
+                                            .clicked()
                                             {
                                                 let (tool_path, env, package) = (
                                                     sdkmanager.clone(),
@@ -613,34 +705,46 @@ fn create_dialog(app: &mut App, ctx: &egui::Context, mut form: Box<Create>) -> O
                                                         .map(drop)
                                                         .map_err(|error| error.to_string())
                                                     }));
+                                                ui.close();
                                             }
-                                            ui.label(
-                                                RichText::new(format!(
-                                                    "API {}  ·  {}  ·  {}",
-                                                    image.api(),
-                                                    image.tag(),
-                                                    image.abi()
-                                                ))
-                                                .small(),
-                                            )
-                                            .on_hover_text(&image.description);
-                                        });
-                                    }
-                                });
+                                        }
+                                    });
+                            });
+                        });
+                        if menu.is_none() {
+                            theme::search_closed(ctx, egui::Id::unique("create-download-search"));
                         }
+                    });
+                    if let Some(job) = &form.install_job {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            let text = images::progress(&job.progress())
+                                .map_or("Installing…".to_owned(), |(percent, what)| {
+                                    format!("{percent}%  {what}")
+                                });
+                            ui.label(theme::muted(ui, text));
+                        });
                     }
                 });
                 ui.end_row();
 
                 ui.label("Memory");
-                ui.add(
-                    egui::Slider::new(&mut form.ram_mb, 1024..=16384)
-                        .step_by(512.0)
-                        .suffix(" MB"),
-                );
-                ui.end_row();
-                ui.label("Storage");
-                ui.add(egui::Slider::new(&mut form.storage_gb, 2..=128).suffix(" GB"));
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let label = 58.0;
+                    // Each combo box adds its padding (about 4 pt) to the width it is given.
+                    let half = (field - label - 16.0 - 8.0) / 2.0;
+                    memory(ui, "create-memory", &mut form.ram_mb, half);
+                    ui.add_sized([label, 20.0], egui::Label::new("Storage"));
+                    egui::ComboBox::new("create-storage", "")
+                        .selected_text(format!("{} GB", form.storage_gb))
+                        .width(half)
+                        .show_ui(ui, |ui| {
+                            for gb in [8, 16, 32, 64, 128] {
+                                ui.selectable_value(&mut form.storage_gb, gb, format!("{gb} GB"));
+                            }
+                        });
+                });
                 ui.end_row();
             });
         error_line(ui, &form.error);
@@ -714,7 +818,7 @@ fn create_dialog(app: &mut App, ctx: &egui::Context, mut form: Box<Create>) -> O
     open.then_some(form)
 }
 
-/// `system-images;android-36;google_apis;x86_64` -> `API 36 · google_apis · x86_64`.
+/// `system-images;android-36;google_apis;x86_64` -> `API 36 · Google APIs · x86_64`.
 fn short(package: &str) -> String {
     let image = SystemImage {
         package: package.to_owned(),
@@ -724,12 +828,7 @@ fn short(package: &str) -> String {
     if image.abi().is_empty() {
         package.to_owned()
     } else {
-        format!(
-            "API {}  ·  {}  ·  {}",
-            image.api(),
-            image.tag(),
-            image.abi()
-        )
+        image.title()
     }
 }
 
@@ -745,17 +844,19 @@ fn edit_dialog(app: &mut App, ctx: &egui::Context, mut form: Box<Edit>) -> Optio
                 ui.text_edit_singleline(&mut form.name);
                 ui.end_row();
                 ui.label("Memory");
-                ui.add(
-                    egui::Slider::new(&mut form.ram_mb, 1024..=16384)
-                        .step_by(512.0)
-                        .suffix(" MB"),
-                );
+                memory(ui, "edit-memory", &mut form.ram_mb, 160.0);
                 ui.end_row();
                 ui.label("Storage");
                 ui.add(egui::TextEdit::singleline(&mut form.storage).hint_text("16G"));
                 ui.end_row();
                 ui.label("CPU cores");
-                ui.add(egui::Slider::new(&mut form.cores, 1..=16));
+                egui::ComboBox::new("edit-cores", "")
+                    .selected_text(form.cores.to_string())
+                    .show_ui(ui, |ui| {
+                        for cores in [1, 2, 4, 6, 8, 12, 16] {
+                            ui.selectable_value(&mut form.cores, cores, cores.to_string());
+                        }
+                    });
                 ui.end_row();
                 ui.label("Graphics");
                 egui::ComboBox::new("edit-gpu", "")

@@ -23,6 +23,40 @@ impl SystemImage {
         self.package.split(';').nth(2).unwrap_or_default()
     }
 
+    /// The tag in words: `google_apis_playstore_ps16k` -> `Google Play, 16 KB pages`.
+    pub fn tag_title(&self) -> String {
+        let tag = self.tag();
+        let (base, pages) = match tag.strip_suffix("_ps16k") {
+            Some(base) => (base, ", 16 KB pages"),
+            None => (tag, ""),
+        };
+        let title = match base {
+            "google_apis_playstore" => "Google Play",
+            "google_apis" => "Google APIs",
+            "default" => "AOSP",
+            "google_atd" => "Google ATD",
+            "aosp_atd" => "AOSP ATD",
+            "wear" => "Wear OS",
+            other if other.starts_with("android-wear") => "Wear OS",
+            "android-tv" => "Android TV",
+            "google-tv" => "Google TV",
+            "android-desktop" => "Desktop",
+            other if other.starts_with("android-automotive") => "Automotive",
+            other => other,
+        };
+        format!("{title}{pages}")
+    }
+
+    /// One line for lists: `API 37.2 · Google Play, 16 KB pages · x86_64`.
+    pub fn title(&self) -> String {
+        format!(
+            "API {}  ·  {}  ·  {}",
+            self.api(),
+            self.tag_title(),
+            self.abi()
+        )
+    }
+
     pub fn abi(&self) -> &str {
         self.package.split(';').nth(3).unwrap_or_default()
     }
@@ -86,38 +120,52 @@ fn sort(images: &mut [SystemImage]) {
     images.sort_by(|a, b| key(b).cmp(&key(a)).then_with(|| a.package.cmp(&b.package)));
 }
 
-/// System images in the "Available Packages" table of `sdkmanager --list`, minus `installed`.
-/// Lines look like `  system-images;android-36;google_apis;x86_64 | 7 | Google APIs ... Image`.
+/// System images this machine can run (x86 and x86_64) in the available table of
+/// `sdkmanager --list`, minus `installed`. Two formats exist:
+/// `  system-images;android-36;google_apis;x86_64 | 7 | Google APIs ... Image` (older
+/// cmdline-tools) and `  system-images/android-36/google_apis/x86_64   7.0.0   Google APIs ...`
+/// (cmdline-tools 23, under "Available packages:").
 pub fn available(sdkmanager_list: &str, installed: &[SystemImage]) -> Vec<SystemImage> {
     let mut in_available = false;
-    let mut images = Vec::new();
+    let mut images: Vec<SystemImage> = Vec::new();
     for line in sdkmanager_list.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("Available Packages:") {
-            in_available = true;
+        // Section titles are not indented and end with a colon.
+        if !line.starts_with(' ') && trimmed.ends_with(':') {
+            in_available = trimmed.eq_ignore_ascii_case("Available Packages:");
             continue;
         }
-        if trimmed.ends_with("Packages:") || trimmed.starts_with("Available Updates:") {
-            in_available = false;
+        if !in_available {
             continue;
         }
-        if !in_available || !trimmed.starts_with("system-images;") {
+        let columns: Vec<&str> = if trimmed.contains('|') {
+            trimmed.split('|').map(str::trim).collect()
+        } else {
+            trimmed
+                .split("  ")
+                .map(str::trim)
+                .filter(|column| !column.is_empty())
+                .collect()
+        };
+        let Some(path) = columns.first() else {
+            continue;
+        };
+        let package = path.replace('/', ";");
+        if !package.starts_with("system-images;") {
             continue;
         }
-        let columns: Vec<&str> = trimmed.split('|').map(str::trim).collect();
-        let package = columns[0].to_owned();
-        if installed.iter().any(|image| image.package == package)
-            || images
-                .iter()
-                .any(|image: &SystemImage| image.package == package)
-        {
-            continue;
-        }
-        images.push(SystemImage {
+        let image = SystemImage {
             description: columns.get(2).copied().unwrap_or_default().to_owned(),
             package,
             installed: false,
-        });
+        };
+        if !matches!(image.abi(), "x86_64" | "x86")
+            || installed.iter().any(|done| done.package == image.package)
+            || images.iter().any(|known| known.package == image.package)
+        {
+            continue;
+        }
+        images.push(image);
     }
     sort(&mut images);
     images
@@ -173,6 +221,39 @@ Available Updates:
         }]
     }
 
+    /// Trimmed `sdkmanager --list` from cmdline-tools 23 (Android CLI).
+    const LIST_23: &str = "\
+WARNING: The SDK Manager CLI tool (sdkmanager) is deprecated. Android CLI will be used instead.
+
+Installed packages:
+  emulator                                                    37.2.12   Android Emulator
+  system-images/android-37.2/google_apis_playstore_ps16k/x86_64   6.0.0   16 KB Page Size Google Play Intel x86_64 Atom System Image
+Available packages:
+  sources/android-37.2                                        1.0.0     Sources for Android 37.2
+  system-images/android-10/default/armeabi-v7a                5.0.0     ARM EABI v7a System Image
+  system-images/android-10/default/x86                        5.0.0     Intel x86 Atom System Image
+  system-images/android-36/google_apis/x86_64                 7.0.0     Google APIs Intel x86_64 Atom System Image
+  system-images/android-37.2/google_apis_playstore_ps16k/x86_64   6.0.0   16 KB Page Size Google Play Intel x86_64 Atom System Image
+";
+
+    #[test]
+    fn reads_the_cmdline_tools_23_format() {
+        let images = available(LIST_23, &installed_pixel());
+        let packages: Vec<&str> = images.iter().map(|image| image.package.as_str()).collect();
+        // ARM images and the installed one are left out; newest first.
+        assert_eq!(
+            packages,
+            [
+                "system-images;android-36;google_apis;x86_64",
+                "system-images;android-10;default;x86"
+            ]
+        );
+        assert_eq!(
+            images[0].description,
+            "Google APIs Intel x86_64 Atom System Image"
+        );
+    }
+
     #[test]
     fn lists_available_images_newest_first_without_installed_ones() {
         let images = available(LIST, &installed_pixel());
@@ -197,6 +278,17 @@ Available Updates:
         assert_eq!(image.api(), "37.2");
         assert_eq!(image.tag(), "google_apis_playstore_ps16k");
         assert_eq!(image.abi(), "x86_64");
+        assert_eq!(image.tag_title(), "Google Play, 16 KB pages");
+        let wear = SystemImage {
+            package: "system-images;android-37.0;android-wear-signed;x86_64".to_owned(),
+            description: String::new(),
+            installed: false,
+        };
+        assert_eq!(wear.tag_title(), "Wear OS");
+        assert_eq!(
+            image.title(),
+            "API 37.2  ·  Google Play, 16 KB pages  ·  x86_64"
+        );
         assert_eq!(
             image.sysdir(),
             "system-images\\android-37.2\\google_apis_playstore_ps16k\\x86_64\\"

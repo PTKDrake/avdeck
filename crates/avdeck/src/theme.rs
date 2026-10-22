@@ -373,6 +373,96 @@ pub fn menu_item(ui: &mut Ui, glyph: &str, text: &str, enabled: bool) -> Respons
     )
 }
 
+/// An item of a searchable select: the value, its label, an optional hover text and group.
+pub struct Choice<T> {
+    pub value: T,
+    pub label: String,
+    pub hover: String,
+    pub group: Option<&'static str>,
+}
+
+/// The search box at the top of a long list. Its text lives in memory under `id` while the
+/// list is open; returns the lowercase query.
+pub fn search_box(ui: &mut Ui, id: egui::Id) -> String {
+    let mut query: String = ui.data(|data| data.get_temp(id)).unwrap_or_default();
+    let response = ui.add(
+        egui::TextEdit::singleline(&mut query)
+            .hint_text(format!("{}  Search", icons::SEARCH))
+            .desired_width(f32::INFINITY)
+            .margin(Margin::symmetric(8, 6)),
+    );
+    // Typing goes straight into the box when the list opens.
+    let opened = ui.data(|data| data.get_temp::<bool>(id.with("open")).is_none());
+    if opened {
+        response.request_focus();
+    }
+    ui.data_mut(|data| {
+        data.insert_temp(id.with("open"), true);
+        data.insert_temp(id, query.clone());
+    });
+    ui.add_space(4.0);
+    query.trim().to_lowercase()
+}
+
+/// Forgets the query once the list has closed.
+pub fn search_closed(ctx: &egui::Context, id: egui::Id) {
+    ctx.data_mut(|data| {
+        data.remove::<String>(id);
+        data.remove::<bool>(id.with("open"));
+    });
+}
+
+fn matches<T>(choice: &Choice<T>, query: &str) -> bool {
+    query.is_empty()
+        || choice.label.to_lowercase().contains(query)
+        || choice.hover.to_lowercase().contains(query)
+}
+
+/// A combo box with a search box on top, for long lists; groups get small headings.
+pub fn searchable_combo<T: Clone + PartialEq>(
+    ui: &mut Ui,
+    id: &str,
+    selected_text: impl Into<egui::WidgetText>,
+    width: f32,
+    choices: &[Choice<T>],
+    value: &mut T,
+) -> Response {
+    let search = egui::Id::unique(id).with("search");
+    let inner = egui::ComboBox::new(id, "")
+        .selected_text(selected_text)
+        .truncate()
+        .width(width)
+        .height(360.0)
+        .show_ui(ui, |ui| {
+            ui.set_min_width(width);
+            let query = search_box(ui, search);
+            let faint = palette(ui).faint;
+            let mut group = None;
+            let mut shown = 0;
+            for choice in choices.iter().filter(|choice| matches(choice, &query)) {
+                if choice.group != group {
+                    group = choice.group;
+                    if let Some(title) = group {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(title).small().color(faint));
+                    }
+                }
+                let response = ui.selectable_value(value, choice.value.clone(), &choice.label);
+                if !choice.hover.is_empty() {
+                    response.on_hover_text(&choice.hover);
+                }
+                shown += 1;
+            }
+            if shown == 0 {
+                ui.label(muted(ui, "Nothing matches"));
+            }
+        });
+    if inner.inner.is_none() {
+        search_closed(ui.ctx(), search);
+    }
+    inner.response
+}
+
 /// A large clickable choice in a dialog: icon, title and what choosing it does. The
 /// recommended one has an accent border.
 pub fn option_card(
