@@ -89,6 +89,16 @@ pub fn semibold() -> FontFamily {
     FontFamily::Name("semibold".into())
 }
 
+/// Light, dark, or whatever Windows uses.
+pub fn set_appearance(ctx: &egui::Context, appearance: avdeck_core::config::Appearance) {
+    use avdeck_core::config::Appearance;
+    ctx.set_theme(match appearance {
+        Appearance::System => egui::ThemePreference::System,
+        Appearance::Light => egui::ThemePreference::Light,
+        Appearance::Dark => egui::ThemePreference::Dark,
+    });
+}
+
 /// Fonts, both styles, and following the Windows light/dark setting.
 pub fn install(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
@@ -168,7 +178,8 @@ fn style(palette: &Palette, dark: bool) -> egui::Style {
     visuals.error_fg_color = palette.danger;
     visuals.selection.bg_fill = palette.accent.gamma_multiply(0.35);
     visuals.selection.stroke = Stroke::new(1.0, palette.accent);
-    visuals.weak_text_color = Some(palette.muted);
+    // Hint text in empty fields must not read as a value.
+    visuals.weak_text_color = Some(palette.faint);
 
     let widgets = &mut visuals.widgets;
     widgets.noninteractive.bg_fill = palette.surface;

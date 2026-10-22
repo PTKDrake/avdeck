@@ -36,6 +36,10 @@ pub enum Source {
 pub struct Found {
     pub path: PathBuf,
     pub source: Source,
+    /// How it was found, written with the variable it came from: `%ANDROID_HOME%`,
+    /// `%ANDROID_HOME%\emulator\emulator.exe`, `%USERPROFILE%\.android\avd`, `PATH`. Empty
+    /// when set in the settings.
+    pub via: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -86,8 +90,12 @@ impl Probe for System {
     }
 }
 
-fn found(path: PathBuf, source: Source) -> Found {
-    Found { path, source }
+fn found(path: PathBuf, source: Source, via: impl Into<String>) -> Found {
+    Found {
+        path,
+        source,
+        via: via.into(),
+    }
 }
 
 /// The first `name` in a `PATH` folder.
@@ -113,6 +121,18 @@ fn is_cmdline_tools(probe: &impl Probe, dir: &Path) -> bool {
 pub fn resolve(overrides: &Overrides, probe: &impl Probe) -> Tools {
     let sdk = resolve_sdk(overrides, probe);
     let sdk_dir = sdk.as_ref().map(|sdk| sdk.path.clone());
+    // Tools inside the SDK are written relative to how the SDK was found.
+    let sdk_via = sdk
+        .as_ref()
+        .map(|sdk| {
+            if sdk.via.is_empty() {
+                "SDK".to_owned()
+            } else {
+                sdk.via.clone()
+            }
+        })
+        .unwrap_or_default();
+    let via_sdk = |parts: &[&str]| format!("{sdk_via}\\{}", parts.join("\\"));
     let in_sdk = |parts: &[&str]| {
         let mut path = sdk_dir.clone()?;
         path.extend(parts);
@@ -122,34 +142,49 @@ pub fn resolve(overrides: &Overrides, probe: &impl Probe) -> Tools {
     let emulator = file_override(probe, &overrides.emulator).or_else(|| {
         in_sdk(&["emulator", "emulator.exe"])
             .filter(|file| probe.is_file(file))
-            .map(|file| found(file, Source::Default))
+            .map(|file| {
+                found(
+                    file,
+                    Source::Default,
+                    via_sdk(&["emulator", "emulator.exe"]),
+                )
+            })
     });
     let adb = file_override(probe, &overrides.adb)
         .or_else(|| {
             in_sdk(&["platform-tools", "adb.exe"])
                 .filter(|file| probe.is_file(file))
-                .map(|file| found(file, Source::Default))
+                .map(|file| {
+                    found(
+                        file,
+                        Source::Default,
+                        via_sdk(&["platform-tools", "adb.exe"]),
+                    )
+                })
         })
-        .or_else(|| on_path(probe, "adb.exe").map(|file| found(file, Source::Path)));
+        .or_else(|| on_path(probe, "adb.exe").map(|file| found(file, Source::Path, "PATH")));
     let cmdline_tools = overrides
         .cmdline_tools
         .clone()
         .filter(|dir| is_cmdline_tools(probe, dir))
-        .map(|dir| found(dir, Source::Settings))
+        .map(|dir| found(dir, Source::Settings, ""))
         .or_else(|| {
             let root = in_sdk(&["cmdline-tools"])?;
             let latest = root.join("latest").join("bin");
             if is_cmdline_tools(probe, &latest) {
-                return Some(found(latest, Source::Default));
+                let via = via_sdk(&["cmdline-tools", "latest", "bin"]);
+                return Some(found(latest, Source::Default, via));
             }
             // Otherwise the highest versioned folder, such as `cmdline-tools\19.0\bin`.
             let mut versions = probe.subdirs(&root);
             versions.sort_by(|a, b| compare_versions(b, a));
             versions
                 .into_iter()
-                .map(|version| root.join(version).join("bin"))
-                .find(|bin| is_cmdline_tools(probe, bin))
-                .map(|bin| found(bin, Source::Default))
+                .find(|version| is_cmdline_tools(probe, &root.join(version).join("bin")))
+                .map(|version| {
+                    let via = via_sdk(&["cmdline-tools", &version, "bin"]);
+                    found(root.join(&version).join("bin"), Source::Default, via)
+                })
         });
     Tools {
         emulator,
@@ -164,18 +199,18 @@ pub fn resolve(overrides: &Overrides, probe: &impl Probe) -> Tools {
 fn file_override(probe: &impl Probe, path: &Option<PathBuf>) -> Option<Found> {
     path.clone()
         .filter(|file| probe.is_file(file))
-        .map(|file| found(file, Source::Settings))
+        .map(|file| found(file, Source::Settings, ""))
 }
 
 fn resolve_sdk(overrides: &Overrides, probe: &impl Probe) -> Option<Found> {
     if let Some(dir) = overrides.sdk.clone().filter(|dir| is_sdk(probe, dir)) {
-        return Some(found(dir, Source::Settings));
+        return Some(found(dir, Source::Settings, ""));
     }
     for name in ["ANDROID_HOME", "ANDROID_SDK_ROOT"] {
         if let Some(dir) = probe.var(name).map(PathBuf::from)
             && is_sdk(probe, &dir)
         {
-            return Some(found(dir, Source::Environment(name)));
+            return Some(found(dir, Source::Environment(name), format!("%{name}%")));
         }
     }
     // `<sdk>\platform-tools\adb.exe` or `<sdk>\emulator\emulator.exe` on PATH.
@@ -184,69 +219,85 @@ fn resolve_sdk(overrides: &Overrides, probe: &impl Probe) -> Option<Found> {
             .and_then(|file| Some(file.parent()?.parent()?.to_owned()))
             .filter(|dir| is_sdk(probe, dir))
         {
-            return Some(found(dir, Source::Path));
+            return Some(found(dir, Source::Path, "PATH"));
         }
     }
     let default = PathBuf::from(probe.var("LOCALAPPDATA")?)
         .join("Android")
         .join("Sdk");
-    is_sdk(probe, &default).then(|| found(default, Source::Default))
+    is_sdk(probe, &default).then(|| found(default, Source::Default, "%LOCALAPPDATA%\\Android\\Sdk"))
 }
 
 fn resolve_avd_home(overrides: &Overrides, probe: &impl Probe) -> Option<Found> {
     if let Some(dir) = overrides.avd_home.clone().filter(|dir| probe.is_dir(dir)) {
-        return Some(found(dir, Source::Settings));
+        return Some(found(dir, Source::Settings, ""));
     }
     if let Some(dir) = probe
         .var("ANDROID_AVD_HOME")
         .map(PathBuf::from)
         .filter(|dir| probe.is_dir(dir))
     {
-        return Some(found(dir, Source::Environment("ANDROID_AVD_HOME")));
+        return Some(found(
+            dir,
+            Source::Environment("ANDROID_AVD_HOME"),
+            "%ANDROID_AVD_HOME%",
+        ));
     }
     if let Some(dir) = probe
         .var("ANDROID_USER_HOME")
         .map(|home| PathBuf::from(home).join("avd"))
         .filter(|dir| probe.is_dir(dir))
     {
-        return Some(found(dir, Source::Environment("ANDROID_USER_HOME")));
+        return Some(found(
+            dir,
+            Source::Environment("ANDROID_USER_HOME"),
+            "%ANDROID_USER_HOME%\\avd",
+        ));
     }
     // The emulator's own default, even before the first AVD creates it.
     let default = PathBuf::from(probe.var("USERPROFILE")?)
         .join(".android")
         .join("avd");
-    Some(found(default, Source::Default))
+    Some(found(
+        default,
+        Source::Default,
+        "%USERPROFILE%\\.android\\avd",
+    ))
 }
 
 fn resolve_jdk(overrides: &Overrides, probe: &impl Probe) -> Option<Found> {
     if let Some(dir) = overrides.jdk.clone().filter(|dir| is_jdk(probe, dir)) {
-        return Some(found(dir, Source::Settings));
+        return Some(found(dir, Source::Settings, ""));
     }
     if let Some(dir) = probe
         .var("JAVA_HOME")
         .map(PathBuf::from)
         .filter(|dir| is_jdk(probe, dir))
     {
-        return Some(found(dir, Source::Environment("JAVA_HOME")));
+        return Some(found(dir, Source::Environment("JAVA_HOME"), "%JAVA_HOME%"));
     }
     // Android Studio's bundled runtime.
     for root in ["ProgramFiles", "LOCALAPPDATA"] {
         let Some(base) = probe.var(root).map(PathBuf::from) else {
             continue;
         };
-        let studio = if root == "LOCALAPPDATA" {
-            base.join("Programs").join("Android Studio").join("jbr")
+        let parts = if root == "LOCALAPPDATA" {
+            ["Programs", "Android Studio", "jbr"]
         } else {
-            base.join("Android").join("Android Studio").join("jbr")
+            ["Android", "Android Studio", "jbr"]
         };
+        let studio: PathBuf = std::iter::once(base)
+            .chain(parts.map(PathBuf::from))
+            .collect();
         if is_jdk(probe, &studio) {
-            return Some(found(studio, Source::Default));
+            let via = format!("%{root}%\\{}", parts.join("\\"));
+            return Some(found(studio, Source::Default, via));
         }
     }
     on_path(probe, "java.exe")
         .and_then(|file| Some(file.parent()?.parent()?.to_owned()))
         .filter(|dir| is_jdk(probe, dir))
-        .map(|dir| found(dir, Source::Path))
+        .map(|dir| found(dir, Source::Path, "PATH"))
 }
 
 /// Compares dotted versions numerically (`19.0` > `9.0`); non-numeric parts compare as text.
@@ -375,6 +426,31 @@ mod tests {
     }
 
     #[test]
+    fn says_how_each_path_was_found() {
+        let tools = resolve(&Overrides::default(), &this_machine());
+        assert_eq!(tools.sdk.unwrap().via, "%ANDROID_HOME%");
+        assert_eq!(
+            tools.emulator.unwrap().via,
+            r"%ANDROID_HOME%\emulator\emulator.exe"
+        );
+        assert_eq!(
+            tools.cmdline_tools.unwrap().via,
+            r"%ANDROID_HOME%\cmdline-tools\latest\bin"
+        );
+        assert_eq!(tools.avd_home.unwrap().via, "%ANDROID_AVD_HOME%");
+        assert_eq!(tools.jdk.unwrap().via, "%JAVA_HOME%");
+        // Set in the settings: nothing to explain.
+        let probe = this_machine().file(r"E:\sdk\platform-tools\adb.exe");
+        let overrides = Overrides {
+            sdk: Some(r"E:\sdk".into()),
+            ..Default::default()
+        };
+        let tools = resolve(&overrides, &probe);
+        assert_eq!(tools.sdk.unwrap().via, "");
+        assert_eq!(tools.adb.unwrap().via, r"SDK\platform-tools\adb.exe");
+    }
+
+    #[test]
     fn settings_win_over_the_environment() {
         let probe = this_machine()
             .file(r"E:\sdk\platform-tools\adb.exe")
@@ -442,6 +518,17 @@ mod tests {
                 Source::Default
             )
         );
+        let again = resolve(&Overrides::default(), &probe);
+        assert_eq!(again.sdk.unwrap().via, "PATH");
+        assert_eq!(
+            again.cmdline_tools.unwrap().via,
+            r"PATH\cmdline-tools\19.0\bin"
+        );
+        assert_eq!(
+            again.jdk.unwrap().via,
+            r"%ProgramFiles%\Android\Android Studio\jbr"
+        );
+        assert_eq!(again.avd_home.unwrap().via, r"%USERPROFILE%\.android\avd");
     }
 
     #[test]

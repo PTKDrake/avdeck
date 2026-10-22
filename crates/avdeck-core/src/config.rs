@@ -19,6 +19,17 @@ pub enum CloseAction {
     KeepRunning,
 }
 
+/// Light or dark look.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Appearance {
+    /// Follow the Windows setting.
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 /// Where the window was, in points of the desktop.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WindowPosition {
@@ -35,6 +46,7 @@ pub struct Config {
     pub launch: launch::Options,
     pub close_tab: CloseAction,
     pub close_app: CloseAction,
+    pub appearance: Appearance,
     pub window: Option<WindowPosition>,
     /// AVD ids open as tabs when Avdeck closed, reopened (attached) at start.
     pub tabs: Vec<String>,
@@ -52,6 +64,7 @@ impl Default for Config {
             },
             close_tab: CloseAction::default(),
             close_app: CloseAction::default(),
+            appearance: Appearance::default(),
             window: None,
             tabs: Vec::new(),
         }
@@ -110,6 +123,7 @@ mod tests {
                 ..Default::default()
             },
             close_app: CloseAction::KeepRunning,
+            appearance: Appearance::Dark,
             window: Some(WindowPosition { x: 640.0, y: 80.5 }),
             tabs: vec!["Pixel_10_Pro_API_37_2".to_owned()],
             ..Default::default()
@@ -125,6 +139,7 @@ mod tests {
             toml::from_str("close_tab = \"stop\"\n[tools]\njdk = 'C:\\jdk'\n").unwrap();
         assert_eq!(config.close_tab, CloseAction::Stop);
         assert_eq!(config.close_app, CloseAction::Ask);
+        assert_eq!(config.appearance, Appearance::System);
         assert_eq!(config.tools.jdk, Some(PathBuf::from(r"C:\jdk")));
         assert!(config.tabs.is_empty());
         assert_eq!(config.launch.gpu.as_deref(), Some("host"));

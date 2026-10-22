@@ -30,6 +30,8 @@ pub const WARNING: &str = "\u{E4E0}";
 pub const DOWNLOAD: &str = "\u{E20C}";
 pub const SNAPSHOT: &str = "\u{E1DA}";
 pub const SEARCH: &str = "\u{E30C}";
+pub const SUN: &str = "\u{E472}";
+pub const MOON: &str = "\u{E330}";
 pub const CHECK: &str = "\u{E182}";
 
 /// Adds the icon font as a fallback of the proportional family.

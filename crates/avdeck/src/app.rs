@@ -100,7 +100,8 @@ impl App {
     pub fn new(ctx: &egui::Context, request: crate::instance::Request) -> Self {
         let config = Config::load();
         let tools = sdk::resolve(&config.tools, &sdk::System);
-        let settings = SettingsForm::from(&config);
+        let settings = SettingsForm::new(&config);
+        theme::set_appearance(ctx, config.appearance);
         let mut app = Self {
             runtime: tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
