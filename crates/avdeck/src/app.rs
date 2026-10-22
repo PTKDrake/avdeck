@@ -82,7 +82,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(ctx: &egui::Context, start: Option<String>) -> Self {
+    pub fn new(ctx: &egui::Context, request: crate::instance::Request) -> Self {
         let config = Config::load();
         let tools = sdk::resolve(&config.tools, &sdk::System);
         let settings = SettingsForm::from(&config);
@@ -119,9 +119,7 @@ impl App {
                 app.open(ctx, &id);
             }
         }
-        if let Some(id) = start {
-            app.open(ctx, &id);
-        }
+        app.handle_request(ctx, &request);
         app
     }
 
@@ -170,6 +168,17 @@ impl App {
             .iter()
             .filter(|running| running.avd_id == id)
             .max_by_key(|running| running.pid)
+    }
+
+    /// A command-line request: open its AVD, starting it with the requested options if needed.
+    fn handle_request(&mut self, ctx: &egui::Context, request: &crate::instance::Request) {
+        let Some(id) = &request.avd else { return };
+        if self.tab(id).is_some() || self.live_grpc(id).is_some() {
+            self.open(ctx, id);
+        } else {
+            let options = request.options(&self.config.launch);
+            self.start(ctx, id, &options);
+        }
     }
 
     /// Shows `id`: its tab if open, else attaches to it if it runs, else starts it.
@@ -823,10 +832,8 @@ impl eframe::App for App {
             self.page = Page::Settings;
         }
         // Requests from `avdeck --avd NAME` started again.
-        for id in crate::instance::take() {
-            if !id.is_empty() {
-                self.open(&ctx, &id);
-            }
+        for request in crate::instance::take() {
+            self.handle_request(&ctx, &request);
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
