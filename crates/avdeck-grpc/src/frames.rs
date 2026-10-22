@@ -1,6 +1,6 @@
 //! Screen frames over the MMAP transport: the client owns a shared memory region and the
 //! emulator writes each RGBA frame into it, announcing it on the `streamScreenshot` stream.
-//! See `docs/grpc-notes.md` for the measurements behind this.
+//! Measured on Windows: about 35 fps (45 at peak) with a few milliseconds from frame to copy.
 
 use crate::control::image_format::ImgFormat;
 use crate::control::image_transport::TransportChannel;

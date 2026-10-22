@@ -1,7 +1,7 @@
-//! Finds the Android SDK, its tools, the AVD home and a JDK (PLAN.md 3.6). Each item comes from
-//! the app config first, then the environment, then the usual locations; the first valid one
-//! wins. Avdeck passes the result to every child process, so the tools work even when the
-//! system environment has none of these variables.
+//! Finds the Android SDK, its tools, the AVD home and a JDK. Each item comes from the app config
+//! first, then the environment, then the usual locations; the first valid one wins. Avdeck passes
+//! the result to every child process, so the tools work even when the system environment has none
+//! of these variables.
 
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;

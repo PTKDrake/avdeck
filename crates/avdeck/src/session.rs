@@ -334,8 +334,8 @@ async fn stream_frames(
     mut visible: watch::Receiver<bool>,
     mut view: watch::Receiver<(u32, u32)>,
 ) -> Result<()> {
-    // Black frames are held back: during animations some AVDs stream every other frame black
-    // (docs/grpc-notes.md). One that is still the newest after HOLD is real and is shown.
+    // Black frames are held back: during animations some AVDs (the Pixel 10 Pro image) stream
+    // every other frame black. One that is still the newest after HOLD is real and is shown.
     const HOLD: Duration = Duration::from_millis(250);
     // A resize restarts the stream only once the size has been still this long.
     const SETTLE: Duration = Duration::from_millis(300);
