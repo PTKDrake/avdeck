@@ -46,6 +46,9 @@ enum Layout {
     },
 }
 
+/// Narrowest window for a device tab: the tab bar and dialogs still fit.
+const MIN_WINDOW_WIDTH: f32 = 280.0;
+
 /// An emulator asked to stop, until its process is gone.
 pub struct Stopping {
     pub pid: u32,
@@ -550,7 +553,7 @@ impl App {
                         ui.label(theme::title("Something went wrong", 18.0));
                     });
                     ui.label(theme::muted(ui, message.as_str()));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.with_layout(buttons(), |ui| {
                         if theme::primary(ui, "OK").clicked() {
                             keep = false;
                         }
@@ -725,7 +728,7 @@ impl App {
             return;
         };
         if info.maximized == Some(true) || info.fullscreen == Some(true) {
-            window::set_layout(0.0, (0, 0));
+            window::set_layout(0.0, (0, 0), 0);
             return;
         }
         let pixels_per_point = ctx.pixels_per_point();
@@ -742,7 +745,7 @@ impl App {
             Page::Emulator(id) => {
                 let Some(tab) = self.tab(id) else { return };
                 let Some(aspect) = tab.aspect() else {
-                    window::set_layout(0.0, (0, 0));
+                    window::set_layout(0.0, (0, 0), 0);
                     return;
                 };
                 let layout = Layout::Emulator {
@@ -758,12 +761,24 @@ impl App {
                 )
             }
             _ => {
-                window::set_layout(0.0, (0, 0));
+                window::set_layout(0.0, (0, 0), 0);
                 let layout = Layout::Page {
                     pixels_per_point: ppp_bits,
                 };
                 (layout, egui::Vec2::ZERO, 0.0, (0, 0))
             }
+        };
+        // The smallest screen that still fits the toolbar beside it.
+        let min_screen = match &self.page {
+            Page::Emulator(id) if aspect > 0.0 => self.tab(id).map_or(0.0, |tab| {
+                display::min_screen_height(
+                    tab.toolbar_height(),
+                    TOOLBAR_WIDTH,
+                    MIN_WINDOW_WIDTH,
+                    aspect,
+                )
+            }),
+            _ => 0.0,
         };
         if aspect > 0.0 {
             window::set_layout(
@@ -772,6 +787,7 @@ impl App {
                     (extras.x * pixels_per_point).round() as i32,
                     (extras.y * pixels_per_point).round() as i32,
                 ),
+                (min_screen * pixels_per_point).round() as i32,
             );
         }
 
@@ -792,6 +808,13 @@ impl App {
         }
 
         let previous = self.fit.layout.replace(layout.clone());
+        // Never smaller than this: the pages need room, a device needs its toolbar.
+        let minimum = if aspect > 0.0 {
+            vec2(min_screen * aspect, min_screen) + extras
+        } else {
+            vec2(720.0, 520.0)
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(minimum));
         let mut keep_center = false;
         let size = match &layout {
             Layout::Page { .. } => self.fit.page_size.unwrap_or(vec2(960.0, 640.0)),
@@ -1141,6 +1164,11 @@ fn tab_widget(
     (response.clicked() && !closed, closed, response)
 }
 
+/// The button row of a dialog: right-aligned, wrapping when the dialog is narrow.
+pub fn buttons() -> egui::Layout {
+    egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true)
+}
+
 /// A centered modal dialog.
 pub fn modal(ctx: &egui::Context, id: &str, content: impl FnOnce(&mut egui::Ui)) {
     egui::Modal::new(egui::Id::unique(id))
@@ -1150,8 +1178,10 @@ pub fn modal(ctx: &egui::Context, id: &str, content: impl FnOnce(&mut egui::Ui))
                 .corner_radius(egui::CornerRadius::same(14)),
         )
         .show(ctx, |ui| {
-            ui.set_min_width(380.0);
-            ui.set_max_width(520.0);
+            // As wide as the window allows (inside the 22 pt frame margins and 8 pt to spare on
+            // each side), up to 520: text wraps, buttons wrap.
+            let width = (ctx.content_rect().width() - 2.0 * 22.0 - 16.0).clamp(140.0, 520.0);
+            ui.set_width(width);
             ui.spacing_mut().item_spacing.y = 10.0;
             content(ui);
         });

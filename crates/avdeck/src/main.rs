@@ -39,7 +39,7 @@ fn main() -> eframe::Result {
             .with_title("Avdeck")
             .with_app_id("avdeck")
             .with_inner_size([960.0, 640.0])
-            .with_min_inner_size([200.0, 200.0]),
+            .with_min_inner_size([720.0, 520.0]),
         ..Default::default()
     };
     eframe::run_native(

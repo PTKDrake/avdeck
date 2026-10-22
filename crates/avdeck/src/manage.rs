@@ -260,7 +260,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, dialog: Dialog) -> Option<Dialog
                         ui.end_row();
                     });
                 error_line(ui, &error);
-                ui.horizontal(|ui| {
+                ui.with_layout(crate::app::buttons(), |ui| {
                     if job.is_some() {
                         ui.spinner();
                         ui.label("Copying…");
@@ -317,7 +317,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, dialog: Dialog) -> Option<Dialog
                     avd.dir.display()
                 ));
                 error_line(ui, &error);
-                ui.horizontal(|ui| {
+                ui.with_layout(crate::app::buttons(), |ui| {
                     if job.is_some() {
                         ui.spinner();
                         ui.label("Deleting…");
@@ -343,7 +343,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, dialog: Dialog) -> Option<Dialog
             modal(ctx, "wipe", |ui| {
                 ui.label(theme::title(format!("Wipe {}?", avd.name), 18.0));
                 ui.label("The device starts as new: apps, accounts and files on it are erased.");
-                ui.horizontal(|ui| {
+                ui.with_layout(crate::app::buttons(), |ui| {
                     if theme::danger(ui, "Wipe and start").clicked() {
                         let options = launch::Options {
                             wipe_data: true,
@@ -391,7 +391,7 @@ pub fn show(app: &mut App, ctx: &egui::Context, dialog: Dialog) -> Option<Dialog
                             .hint_text("-netdelay gprs -no-audio"),
                     );
                 });
-                ui.horizontal(|ui| {
+                ui.with_layout(crate::app::buttons(), |ui| {
                     if theme::primary(ui, format!("{}  Start", icons::START)).clicked() {
                         options.extra = extra.split_whitespace().map(str::to_owned).collect();
                         app.start(ctx, &avd.id, &options);
@@ -645,7 +645,7 @@ fn create_dialog(app: &mut App, ctx: &egui::Context, mut form: Box<Create>) -> O
             });
         error_line(ui, &form.error);
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
+        ui.with_layout(crate::app::buttons(), |ui| {
             if form.job.is_some() {
                 ui.spinner();
                 ui.label("Creating…");
@@ -779,7 +779,7 @@ fn edit_dialog(app: &mut App, ctx: &egui::Context, mut form: Box<Edit>) -> Optio
                 .weak(),
         );
         error_line(ui, &form.error);
-        ui.horizontal(|ui| {
+        ui.with_layout(crate::app::buttons(), |ui| {
             if theme::primary(ui, format!("{}  Save", icons::CHECK)).clicked() {
                 let yes = |value: bool| if value { "yes" } else { "no" }.to_owned();
                 let values = [

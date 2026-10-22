@@ -18,6 +18,8 @@ static ASPECT: AtomicU32 = AtomicU32::new(0);
 /// Pixels of the client area around the screen (toolbar, tab bar), horizontally and vertically.
 static EXTRA_X: AtomicI32 = AtomicI32::new(0);
 static EXTRA_Y: AtomicI32 = AtomicI32::new(0);
+/// Smallest screen height, in physical pixels.
+static MIN_HEIGHT: AtomicI32 = AtomicI32::new(0);
 
 pub fn install(window: HWND) {
     if PREVIOUS.load(Ordering::Relaxed) != 0 {
@@ -29,9 +31,10 @@ pub fn install(window: HWND) {
 }
 
 /// Locks resizing to `aspect` for the screen area, which is the client area minus `extra`
-/// physical pixels; an aspect of 0 unlocks.
-pub fn set_layout(aspect: f32, extra: (i32, i32)) {
+/// physical pixels and at least `min_height` tall; an aspect of 0 unlocks.
+pub fn set_layout(aspect: f32, extra: (i32, i32), min_height: i32) {
     ASPECT.store(aspect.to_bits(), Ordering::Relaxed);
+    MIN_HEIGHT.store(min_height, Ordering::Relaxed);
     EXTRA_X.store(extra.0, Ordering::Relaxed);
     EXTRA_Y.store(extra.1, Ordering::Relaxed);
 }
@@ -86,6 +89,7 @@ unsafe fn correct(window: HWND, edge: u32, rect: &mut RECT) {
             frame.1 + EXTRA_Y.load(Ordering::Relaxed),
         ),
         aspect,
+        MIN_HEIGHT.load(Ordering::Relaxed),
     );
     *rect = RECT {
         left,

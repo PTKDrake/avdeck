@@ -152,6 +152,7 @@ pub fn lock_aspect(
     (left, top, right, bottom): (i32, i32, i32, i32),
     extra: (i32, i32),
     aspect: f32,
+    min_height: i32,
 ) -> (i32, i32, i32, i32) {
     let content_width = (right - left - extra.0).max(1) as f32;
     let content_height = (bottom - top - extra.1).max(1) as f32;
@@ -163,11 +164,16 @@ pub fn lock_aspect(
         // Corners follow whichever side the cursor pulled further.
         _ => content_width / aspect >= content_height,
     };
-    let (width, height) = if width_driven {
+    let (mut width, mut height) = if width_driven {
         (right - left, height_for(content_width))
     } else {
         (width_for(content_height), bottom - top)
     };
+    // Never smaller than the minimum screen height, still at the aspect ratio.
+    if height - extra.1 < min_height {
+        height = min_height + extra.1;
+        width = width_for(min_height as f32);
+    }
     let moves_left = matches!(edge, Edge::Left | Edge::TopLeft | Edge::BottomLeft);
     let moves_top = matches!(edge, Edge::Top | Edge::TopLeft | Edge::TopRight);
     let (left, right) = if moves_left {
@@ -181,6 +187,18 @@ pub fn lock_aspect(
         (top, top + height)
     };
     (left, top, right, bottom)
+}
+
+/// Smallest screen height, in points, for a device tab: tall enough for the toolbar beside it,
+/// and wide enough (with the toolbar) that the window is at least `min_window_width` wide.
+pub fn min_screen_height(
+    toolbar_height: f32,
+    toolbar_width: f32,
+    min_window_width: f32,
+    aspect: f32,
+) -> f32 {
+    let for_width = (min_window_width - toolbar_width).max(0.0) / aspect.max(0.01);
+    toolbar_height.max(for_width).ceil()
 }
 
 /// Size in points of the screen area when a device first shows: its longer side is `fraction`
@@ -351,6 +369,7 @@ mod tests {
             (100, 50, 100 + 700, 50 + 1000),
             (16 + 61, 39 + 48),
             aspect,
+            0,
         );
         let content = (rect.2 - rect.0 - 16 - 61, rect.3 - rect.1 - 39 - 48);
         assert_eq!(content.0, 623);
@@ -367,6 +386,7 @@ mod tests {
             (0, 0, 400 + 10 + 50, 1000 + 30),
             (10 + 50, 30),
             aspect,
+            0,
         );
         assert_eq!((rect.2, rect.3), (460, 1030));
         assert_eq!(rect.2 - rect.0, 500 + 10 + 50);
@@ -375,8 +395,27 @@ mod tests {
 
     #[test]
     fn top_edge_sets_the_width_from_the_height() {
-        let rect = lock_aspect(Edge::Top, (0, 100, 300, 700), (40, 0), 0.5);
+        let rect = lock_aspect(Edge::Top, (0, 100, 300, 700), (40, 0), 0.5, 0);
         assert_eq!(rect, (0, 100, 340, 700));
+    }
+
+    #[test]
+    fn minimum_screens() {
+        // Pixel 10 Pro: the window width decides (280 pt wide window, 44 pt toolbar).
+        let phone = min_screen_height(415.0, 44.0, 280.0, 1280.0 / 2856.0);
+        assert_eq!(phone, 527.0);
+        // Pixel Tablet in landscape: the toolbar height decides.
+        assert_eq!(min_screen_height(415.0, 44.0, 280.0, 1.6), 415.0);
+    }
+
+    #[test]
+    fn stops_at_the_minimum_height_keeping_the_aspect_ratio() {
+        // Dragging the bottom-right corner far up and left on a phone (aspect 0.5).
+        let rect = lock_aspect(Edge::BottomRight, (100, 100, 150, 140), (40, 60), 0.5, 600);
+        assert_eq!(rect, (100, 100, 100 + 300 + 40, 100 + 600 + 60));
+        // Dragging the top edge down keeps the bottom where it was.
+        let rect = lock_aspect(Edge::Top, (0, 900, 400, 1000), (0, 0), 0.5, 600);
+        assert_eq!(rect, (0, 400, 300, 1000));
     }
 
     #[test]

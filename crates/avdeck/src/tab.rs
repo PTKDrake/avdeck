@@ -119,6 +119,13 @@ impl EmulatorTab {
         }
     }
 
+    /// Height in points the toolbar needs: its buttons, separators and margins.
+    pub fn toolbar_height(&self) -> f32 {
+        let buttons = TOOLBAR.iter().flatten().count() + usize::from(self.avd.foldable);
+        let separators = TOOLBAR.len() - TOOLBAR.iter().flatten().count();
+        8.0 + buttons as f32 * 36.0 + separators as f32 * 13.0 + 8.0
+    }
+
     pub fn natural(&self) -> (u32, u32) {
         self.avd.panel.unwrap_or((1080, 2400))
     }
