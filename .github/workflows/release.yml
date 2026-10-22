@@ -1,0 +1,75 @@
+name: Release
+
+# Pushing a tag such as v0.1.0 builds Avdeck and publishes a GitHub release with a zip of the app.
+# Running the workflow by hand builds the same zip as an artifact, without publishing anything.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: windows-latest
+    env:
+      REF_NAME: ${{ github.ref_name }}
+      IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check that the tag matches the version
+        if: env.IS_TAG == 'true'
+        shell: pwsh
+        run: |
+          $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          $version = ($metadata.packages | Where-Object name -eq 'avdeck').version
+          if ("v$version" -ne $env:REF_NAME) {
+            throw "Tag $env:REF_NAME does not match version $version in Cargo.toml"
+          }
+
+      - name: Test
+        run: cargo test --release --locked
+
+      - name: Build
+        run: cargo build --release --locked -p avdeck
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "avdeck-$($env:REF_NAME -replace '[^\w.-]', '-')-windows-x64"
+          $dir = "dist/$name"
+          New-Item -ItemType Directory -Force "$dir/licenses" | Out-Null
+          Copy-Item target/release/avdeck.exe, README.md $dir
+          Copy-Item crates/avdeck/assets/*-LICENSE.txt "$dir/licenses"
+          Compress-Archive -Path "$dir/*" -DestinationPath "dist/$name.zip"
+          $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name.zip" | Out-File "dist/$name.zip.sha256" -Encoding ascii -NoNewline
+          "PACKAGE=$name" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.PACKAGE }}
+          path: |
+            dist/${{ env.PACKAGE }}.zip
+            dist/${{ env.PACKAGE }}.zip.sha256
+
+      - name: Publish the release
+        if: env.IS_TAG == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $flags = @('--title', "Avdeck $env:REF_NAME", '--generate-notes', '--verify-tag')
+          # v1.2.0-beta.1 and the like are prereleases.
+          if ($env:REF_NAME -like '*-*') { $flags += '--prerelease' }
+          gh release create $env:REF_NAME "dist/$env:PACKAGE.zip" "dist/$env:PACKAGE.zip.sha256" @flags

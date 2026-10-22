@@ -44,7 +44,13 @@ its window problems on mixed-DPI, multi-monitor setups.
 Avdeck finds these by itself (see [Configuration](#configuration)); no environment variable is
 required.
 
-## Build and install
+## Download
+
+Each release on the repository's **Releases** page has `avdeck-vX.Y.Z-windows-x64.zip` with
+`avdeck.exe`, this README and the font licenses, plus a `.sha256` checksum. Unzip it anywhere and
+run `avdeck.exe`. Nothing needs to be installed.
+
+## Build from source
 
 Building needs the Rust stable toolchain for MSVC, version 1.95 or newer (required by egui 0.37).
 `protoc` is vendored, so there is nothing else to install.
@@ -154,6 +160,24 @@ cargo fmt
 
 Geometry, discovery-file parsing and tool resolution are pure functions, tested with values
 measured on real devices and recorded tool output.
+
+GitHub Actions runs the same checks on every push to `master` and on pull requests (`ci.yml`,
+which also keeps the built `avdeck.exe` as an artifact for 14 days).
+
+### Releasing
+
+1. Set the new version in `Cargo.toml` (`[workspace.package] version`) and commit.
+2. Tag the commit and push the tag:
+
+   ```powershell
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+`release.yml` checks that the tag matches the version, runs the tests, builds the zip and
+publishes the GitHub release with generated notes. A tag with a suffix such as `v0.2.0-beta.1`
+makes a prerelease. Running the workflow by hand from the Actions tab builds the zip as an
+artifact without publishing anything.
 
 ## Credits
 
