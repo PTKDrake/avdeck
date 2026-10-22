@@ -144,20 +144,19 @@ impl Edge {
 }
 
 /// Outer window rectangle `(left, top, right, bottom)` in physical pixels while the user drags
-/// `edge`, corrected so the screen area (client minus `toolbar` pixels on the right) keeps
-/// `aspect` (width / height) and the device fills it with no bars. `frame` is the outer size
-/// minus the client size (borders and title bar). The edge opposite the drag stays put.
+/// `edge`, corrected so the screen area keeps `aspect` (width / height) and the device fills it
+/// with no bars. `extra` is everything around the screen area, horizontally and vertically:
+/// borders, title bar, toolbar, tab bar. The edge opposite the drag stays put.
 pub fn lock_aspect(
     edge: Edge,
     (left, top, right, bottom): (i32, i32, i32, i32),
-    frame: (i32, i32),
-    toolbar: i32,
+    extra: (i32, i32),
     aspect: f32,
 ) -> (i32, i32, i32, i32) {
-    let content_width = (right - left - frame.0 - toolbar).max(1) as f32;
-    let content_height = (bottom - top - frame.1).max(1) as f32;
-    let width_for = |height: f32| (height * aspect).round() as i32 + frame.0 + toolbar;
-    let height_for = |width: f32| (width / aspect).round() as i32 + frame.1;
+    let content_width = (right - left - extra.0).max(1) as f32;
+    let content_height = (bottom - top - extra.1).max(1) as f32;
+    let width_for = |height: f32| (height * aspect).round() as i32 + extra.0;
+    let height_for = |width: f32| (width / aspect).round() as i32 + extra.1;
     let width_driven = match edge {
         Edge::Left | Edge::Right => true,
         Edge::Top | Edge::Bottom => false,
@@ -345,16 +344,15 @@ mod tests {
 
     #[test]
     fn dragging_the_right_edge_sets_the_height() {
-        // Pixel 10 Pro at 150%: 30 px borders/title, 61 px toolbar.
+        // Pixel 10 Pro at 150%: 16x39 px borders and title, 61 px toolbar, 48 px tab bar.
         let aspect = 1280.0 / 2856.0;
         let rect = lock_aspect(
             Edge::Right,
             (100, 50, 100 + 700, 50 + 1000),
-            (16, 39),
-            61,
+            (16 + 61, 39 + 48),
             aspect,
         );
-        let content = (rect.2 - rect.0 - 16 - 61, rect.3 - rect.1 - 39);
+        let content = (rect.2 - rect.0 - 16 - 61, rect.3 - rect.1 - 39 - 48);
         assert_eq!(content.0, 623);
         assert_eq!(content.1, (623.0 / aspect).round() as i32);
         assert_eq!((rect.0, rect.1), (100, 50));
@@ -367,8 +365,7 @@ mod tests {
         let rect = lock_aspect(
             Edge::TopLeft,
             (0, 0, 400 + 10 + 50, 1000 + 30),
-            (10, 30),
-            50,
+            (10 + 50, 30),
             aspect,
         );
         assert_eq!((rect.2, rect.3), (460, 1030));
@@ -378,7 +375,7 @@ mod tests {
 
     #[test]
     fn top_edge_sets_the_width_from_the_height() {
-        let rect = lock_aspect(Edge::Top, (0, 100, 300, 700), (0, 0), 40, 0.5);
+        let rect = lock_aspect(Edge::Top, (0, 100, 300, 700), (40, 0), 0.5);
         assert_eq!(rect, (0, 100, 340, 700));
     }
 

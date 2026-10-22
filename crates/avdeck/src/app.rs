@@ -1,0 +1,1029 @@
+//! The Avdeck window: a tab bar (Devices, one tab per emulator, Settings), the pages, window
+//! sizing, and starting, attaching and stopping emulators.
+
+use crate::extended;
+use crate::icons;
+use crate::session::Phase;
+use crate::settings::SettingsForm;
+use crate::tab::{EmulatorTab, TOOLBAR_WIDTH};
+use crate::theme;
+use crate::window;
+use avdeck_core::avd::{self, Avd};
+use avdeck_core::config::{CloseAction, Config, WindowPosition};
+use avdeck_core::display;
+use avdeck_core::running::{self, Running};
+use avdeck_core::sdk::{self, Tools};
+use avdeck_core::{console, launch};
+use eframe::egui::{self, Color32, RichText, pos2, vec2};
+use std::time::{Duration, Instant};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Page {
+    Devices,
+    Settings,
+    /// The tab of this AVD id.
+    Emulator(String),
+}
+
+pub enum Dialog {
+    CloseTab(String),
+    CloseApp,
+    Error(String),
+    /// Device management dialogs (create, edit, delete, ...), see `manage`.
+    Manage(Box<crate::manage::Dialog>),
+}
+
+/// What the window was last sized for; a change resizes it.
+#[derive(Clone, Debug, PartialEq)]
+enum Layout {
+    Page {
+        pixels_per_point: u32,
+    },
+    Emulator {
+        id: String,
+        sideways: bool,
+        pixels_per_point: u32,
+    },
+}
+
+#[derive(Default)]
+struct Fit {
+    layout: Option<Layout>,
+    /// A size was requested and has not arrived yet: don't learn the size from the window.
+    pending: Option<(egui::Vec2, Instant)>,
+    /// Inner size of the Devices and Settings pages.
+    page_size: Option<egui::Vec2>,
+    placed: bool,
+}
+
+pub struct App {
+    runtime: tokio::runtime::Runtime,
+    pub config: Config,
+    pub tools: Tools,
+    pub avds: Vec<Avd>,
+    /// Running emulators, from their discovery files.
+    pub live: Vec<Running>,
+    scanned_live: Option<Instant>,
+    scanned_avds: Option<Instant>,
+    pub tabs: Vec<EmulatorTab>,
+    pub page: Page,
+    window: Option<isize>,
+    fit: Fit,
+    pub dialog: Option<Dialog>,
+    pub settings: SettingsForm,
+    /// Filter on the Devices page.
+    pub search: String,
+    /// Remember the choice in the close dialogs.
+    remember: bool,
+    /// Ctrl+Shift+D: DPI, sizes and frame rate over the screen.
+    debug: bool,
+    /// The user confirmed closing; let the window close.
+    closing: bool,
+}
+
+impl App {
+    pub fn new(ctx: &egui::Context, start: Option<String>) -> Self {
+        let config = Config::load();
+        let tools = sdk::resolve(&config.tools, &sdk::System);
+        let settings = SettingsForm::from(&config);
+        let mut app = Self {
+            runtime: tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("tokio runtime"),
+            page: Page::Devices,
+            config,
+            tools,
+            avds: Vec::new(),
+            live: Vec::new(),
+            scanned_live: None,
+            scanned_avds: None,
+            tabs: Vec::new(),
+            window: None,
+            fit: Fit::default(),
+            dialog: None,
+            settings,
+            search: String::new(),
+            remember: false,
+            debug: false,
+            closing: false,
+        };
+        app.rescan(true);
+        if app.tools.sdk.is_none() || app.tools.emulator.is_none() {
+            app.page = Page::Settings;
+        }
+        // Tabs open when Avdeck last closed, if their emulators still run.
+        for id in app.config.tabs.clone() {
+            if app.live_grpc(&id).is_some() {
+                app.open(ctx, &id);
+            }
+        }
+        if let Some(id) = start {
+            app.open(ctx, &id);
+        }
+        app
+    }
+
+    /// Re-reads running emulators (every second) and AVDs (every 5 s, or `force`).
+    pub fn rescan(&mut self, force: bool) {
+        let due = |at: Option<Instant>, every: u64| {
+            at.is_none_or(|at| at.elapsed() > Duration::from_secs(every))
+        };
+        if force || due(self.scanned_live, 1) {
+            self.live = running::live();
+            self.scanned_live = Some(Instant::now());
+        }
+        if force || due(self.scanned_avds, 5) {
+            self.avds = self
+                .tools
+                .avd_home
+                .as_ref()
+                .map(|home| avd::list(&home.path))
+                .unwrap_or_default();
+            self.scanned_avds = Some(Instant::now());
+        }
+    }
+
+    pub fn runtime(&self) -> tokio::runtime::Handle {
+        self.runtime.handle().clone()
+    }
+
+    pub fn tab(&self, id: &str) -> Option<&EmulatorTab> {
+        self.tabs.iter().find(|tab| tab.avd.id == id)
+    }
+
+    fn tab_mut(&mut self, id: &str) -> Option<&mut EmulatorTab> {
+        self.tabs.iter_mut().find(|tab| tab.avd.id == id)
+    }
+
+    /// The running emulator of `id` that serves gRPC.
+    pub fn live_grpc(&self, id: &str) -> Option<&Running> {
+        self.live
+            .iter()
+            .filter(|running| running.avd_id == id && running.grpc_port.is_some())
+            .max_by_key(|running| running.pid)
+    }
+
+    pub fn live_any(&self, id: &str) -> Option<&Running> {
+        self.live
+            .iter()
+            .filter(|running| running.avd_id == id)
+            .max_by_key(|running| running.pid)
+    }
+
+    /// Shows `id`: its tab if open, else attaches to it if it runs, else starts it.
+    pub fn open(&mut self, ctx: &egui::Context, id: &str) {
+        if self.tab(id).is_some() {
+            self.page = Page::Emulator(id.to_owned());
+            return;
+        }
+        if let Some(port) = self.live_grpc(id).and_then(|running| running.grpc_port) {
+            self.attach(ctx, id, port);
+        } else {
+            let options = self.config.launch.clone();
+            self.start(ctx, id, &options);
+        }
+    }
+
+    fn attach(&mut self, ctx: &egui::Context, id: &str, port: u16) {
+        let Some(avd) = self.avds.iter().find(|avd| avd.id == id).cloned() else {
+            self.dialog = Some(Dialog::Error(format!("No AVD named {id}.")));
+            return;
+        };
+        let tab = EmulatorTab::new(self.runtime.handle(), avd, port, None, None, ctx);
+        self.tabs.push(tab);
+        self.page = Page::Emulator(id.to_owned());
+    }
+
+    /// Starts `id` headless with gRPC and opens its tab.
+    pub fn start(&mut self, ctx: &egui::Context, id: &str, options: &launch::Options) {
+        if let Err(error) = self.try_start(ctx, id, options) {
+            self.dialog = Some(Dialog::Error(format!("Cannot start {id}: {error}")));
+        }
+    }
+
+    fn try_start(
+        &mut self,
+        ctx: &egui::Context,
+        id: &str,
+        options: &launch::Options,
+    ) -> anyhow::Result<()> {
+        use anyhow::Context;
+        let emulator = self
+            .tools
+            .emulator
+            .as_ref()
+            .context("the emulator was not found (see Settings)")?
+            .path
+            .clone();
+        let avd = self
+            .avds
+            .iter()
+            .find(|avd| avd.id == id)
+            .cloned()
+            .context("no such AVD")?;
+        if self.live_any(id).is_some() {
+            anyhow::bail!("it is already running without gRPC; stop it first");
+        }
+        // Ports of emulators that are starting but have not written their discovery file yet
+        // are bound already, so a bind test covers them.
+        let ports = launch::pick_ports(launch::port_free).context("no free emulator ports")?;
+        let args = launch::arguments(id, ports, options);
+        let log = std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("avdeck")
+            .join("logs")
+            .join(format!("{id}.log"));
+        let child = launch::spawn(&emulator, &args, &self.tools.child_env(), &log)?;
+        let tab = EmulatorTab::new(
+            self.runtime.handle(),
+            avd,
+            ports.grpc,
+            Some(child),
+            Some(log),
+            ctx,
+        );
+        self.tabs.push(tab);
+        self.page = Page::Emulator(id.to_owned());
+        self.scanned_live = None;
+        Ok(())
+    }
+
+    /// Stops the emulator of `id` (saving its snapshot) and closes its tab.
+    pub fn stop(&mut self, id: &str) {
+        let port = self
+            .tab(id)
+            .and_then(|tab| tab.console_port())
+            .or_else(|| self.live_any(id).and_then(|running| running.console_port));
+        self.close_tab(id);
+        if let Some(port) = port {
+            self.runtime.spawn_blocking(move || console::kill(port));
+        }
+        self.scanned_live = None;
+    }
+
+    /// Closes the tab of `id`; its emulator keeps running unless stopped.
+    fn close_tab(&mut self, id: &str) {
+        if self.tab(id).and_then(|tab| tab.pid()) == extended::docked_pid() {
+            extended::detach();
+        }
+        self.tabs.retain(|tab| tab.avd.id != id);
+        if self.page == Page::Emulator(id.to_owned()) {
+            self.page = self
+                .tabs
+                .last()
+                .map_or(Page::Devices, |tab| Page::Emulator(tab.avd.id.clone()));
+        }
+    }
+
+    fn request_close_tab(&mut self, id: &str) {
+        let running = self
+            .tab(id)
+            .is_some_and(|tab| !matches!(tab.phase(), Phase::Ended(_)));
+        match (running, self.config.close_tab) {
+            (false, _) | (true, CloseAction::KeepRunning) => self.close_tab(id),
+            (true, CloseAction::Stop) => self.stop(id),
+            (true, CloseAction::Ask) => {
+                self.remember = false;
+                self.dialog = Some(Dialog::CloseTab(id.to_owned()));
+            }
+        }
+    }
+
+    /// Before the window closes: remember the tabs and where the window was.
+    fn save_state(&mut self, ctx: &egui::Context) {
+        self.config.tabs = self.tabs.iter().map(|tab| tab.avd.id.clone()).collect();
+        if let Some(outer) = ctx.input(|input| input.viewport().outer_rect) {
+            self.config.window = Some(WindowPosition {
+                x: outer.min.x,
+                y: outer.min.y,
+            });
+        }
+        let _ = self.config.save();
+        extended::detach();
+    }
+
+    pub fn save_config(&mut self) {
+        if let Err(error) = self.config.save() {
+            self.dialog = Some(Dialog::Error(format!("Cannot save settings: {error}")));
+        }
+    }
+
+    fn handle_close_request(&mut self, ctx: &egui::Context) {
+        if !ctx.input(|input| input.viewport().close_requested()) || self.closing {
+            return;
+        }
+        let running = self
+            .tabs
+            .iter()
+            .any(|tab| !matches!(tab.phase(), Phase::Ended(_)));
+        match (running, self.config.close_app) {
+            (false, _) | (true, CloseAction::KeepRunning) => self.save_state(ctx),
+            (true, CloseAction::Stop) => {
+                self.save_state(ctx);
+                self.stop_all();
+            }
+            (true, CloseAction::Ask) => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.remember = false;
+                self.dialog = Some(Dialog::CloseApp);
+            }
+        }
+    }
+
+    fn stop_all(&mut self) {
+        let ports: Vec<u16> = self
+            .tabs
+            .iter()
+            .filter_map(|tab| tab.console_port())
+            .collect();
+        self.tabs.clear();
+        // Blocking on purpose: the process is about to exit.
+        for port in ports {
+            let _ = console::kill(port);
+        }
+    }
+
+    fn close_app(&mut self, ctx: &egui::Context, stop: bool) {
+        if self.remember {
+            self.config.close_app = if stop {
+                CloseAction::Stop
+            } else {
+                CloseAction::KeepRunning
+            };
+        }
+        self.save_state(ctx);
+        if stop {
+            self.stop_all();
+        }
+        self.closing = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    fn dialogs(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = self.dialog.take() else {
+            return;
+        };
+        let mut keep = true;
+        match &dialog {
+            Dialog::CloseTab(id) => {
+                let name = self.tab(id).map_or(id.clone(), |tab| tab.avd.name.clone());
+                let mut choice = None;
+                modal(ctx, "close-tab", |ui| {
+                    ui.label(theme::title(format!("Close {name}?"), 18.0));
+                    ui.label(theme::muted(
+                        ui,
+                        "The device can keep running in the background; open it again from Devices.",
+                    ));
+                    ui.checkbox(&mut self.remember, "Remember my choice");
+                    ui.add_space(4.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if theme::primary(ui, "Keep running").clicked() {
+                            choice = Some(false);
+                        }
+                        if theme::secondary(ui, format!("{}  Stop device", icons::STOP)).clicked() {
+                            choice = Some(true);
+                        }
+                        if ui.add(egui::Button::new("Cancel").frame(false)).clicked() {
+                            keep = false;
+                        }
+                    });
+                });
+                if let Some(stop) = choice {
+                    if self.remember {
+                        self.config.close_tab = if stop {
+                            CloseAction::Stop
+                        } else {
+                            CloseAction::KeepRunning
+                        };
+                        self.save_config();
+                    }
+                    if stop {
+                        self.stop(id);
+                    } else {
+                        self.close_tab(id);
+                    }
+                    keep = false;
+                }
+            }
+            Dialog::CloseApp => {
+                let mut choice = None;
+                modal(ctx, "close-app", |ui| {
+                    ui.label(theme::title("Close Avdeck?", 18.0));
+                    let names: Vec<&str> =
+                        self.tabs.iter().map(|tab| tab.avd.name.as_str()).collect();
+                    ui.label(theme::muted(
+                        ui,
+                        format!(
+                            "{} still running. They can keep running in the background; Avdeck \
+                             reopens their tabs next time.",
+                            names.join(", ")
+                        ),
+                    ));
+                    ui.checkbox(&mut self.remember, "Remember my choice");
+                    ui.add_space(4.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if theme::primary(ui, "Keep running").clicked() {
+                            choice = Some(false);
+                        }
+                        if theme::secondary(ui, format!("{}  Stop all", icons::STOP)).clicked() {
+                            choice = Some(true);
+                        }
+                        if ui.add(egui::Button::new("Cancel").frame(false)).clicked() {
+                            keep = false;
+                        }
+                    });
+                });
+                if let Some(stop) = choice {
+                    self.close_app(ctx, stop);
+                    keep = false;
+                }
+            }
+            Dialog::Error(message) => {
+                modal(ctx, "error", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(icons::WARNING)
+                                .size(22.0)
+                                .color(theme::palette(ui).danger),
+                        );
+                        ui.label(theme::title("Something went wrong", 18.0));
+                    });
+                    ui.label(theme::muted(ui, message.as_str()));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if theme::primary(ui, "OK").clicked() {
+                            keep = false;
+                        }
+                    });
+                });
+            }
+            Dialog::Manage(_) => {
+                let Dialog::Manage(inner) = dialog else {
+                    unreachable!()
+                };
+                self.dialog = crate::manage::show(self, ctx, *inner)
+                    .map(|dialog| Dialog::Manage(Box::new(dialog)));
+                return;
+            }
+        }
+        if keep && self.dialog.is_none() {
+            self.dialog = Some(dialog);
+        }
+    }
+
+    fn tab_bar(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let palette = theme::palette(ui);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if tab_widget(
+                ui,
+                self.page == Page::Devices,
+                None,
+                Some(icons::DEVICES),
+                "Devices",
+                false,
+            )
+            .0
+            {
+                self.page = Page::Devices;
+            }
+            let mut close = None;
+            for tab in &self.tabs {
+                let selected = self.page == Page::Emulator(tab.avd.id.clone());
+                let dot = match tab.phase() {
+                    Phase::Starting => palette.warning,
+                    Phase::Running => palette.success,
+                    Phase::Ended(_) => palette.danger,
+                };
+                let (clicked, closed, response) =
+                    tab_widget(ui, selected, Some(dot), None, &tab.avd.name, true);
+                if clicked {
+                    self.page = Page::Emulator(tab.avd.id.clone());
+                }
+                if closed || response.middle_clicked() {
+                    close = Some(tab.avd.id.clone());
+                }
+            }
+            if let Some(id) = close {
+                self.request_close_tab(&id);
+            }
+            // Open another device without going through the Devices page.
+            let add = theme::icon(ui, icons::ADD, "Open a device", 30.0);
+            egui::Popup::menu(&add).show(|ui| {
+                ui.set_min_width(220.0);
+                let closed: Vec<Avd> = self
+                    .avds
+                    .iter()
+                    .filter(|avd| self.tab(&avd.id).is_none())
+                    .cloned()
+                    .collect();
+                if closed.is_empty() {
+                    ui.label(theme::muted(ui, "Every device is open."));
+                }
+                for avd in closed {
+                    let running = self.live_grpc(&avd.id).is_some();
+                    let glyph = if running {
+                        icons::DEVICES
+                    } else {
+                        icons::START
+                    };
+                    let text = format!("{glyph}   {}", avd.name);
+                    if ui
+                        .add(
+                            egui::Button::new(text)
+                                .frame(false)
+                                .min_size(vec2(ui.available_width(), 28.0)),
+                        )
+                        .on_hover_text(if running {
+                            "Running: open it"
+                        } else {
+                            "Start it"
+                        })
+                        .clicked()
+                    {
+                        self.open(ctx, &avd.id);
+                        ui.close();
+                    }
+                }
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let settings = theme::icon(ui, icons::SETTINGS, "Settings (Ctrl+,)", 30.0);
+                if self.page == Page::Settings {
+                    ui.painter().rect_stroke(
+                        settings.rect,
+                        egui::CornerRadius::same(8),
+                        egui::Stroke::new(1.0, palette.border),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+                if settings.clicked() {
+                    self.page = Page::Settings;
+                }
+            });
+        });
+        // Ctrl+Tab / Ctrl+Shift+Tab and Ctrl+1..9 switch tabs.
+        let (next, previous, number) = ctx.input_mut(|input| {
+            let next = input.consume_key(egui::Modifiers::CTRL, egui::Key::Tab);
+            let previous = input.consume_key(
+                egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+                egui::Key::Tab,
+            );
+            let keys = [
+                egui::Key::Num1,
+                egui::Key::Num2,
+                egui::Key::Num3,
+                egui::Key::Num4,
+                egui::Key::Num5,
+                egui::Key::Num6,
+                egui::Key::Num7,
+                egui::Key::Num8,
+                egui::Key::Num9,
+            ];
+            let number = keys
+                .iter()
+                .position(|&key| input.consume_key(egui::Modifiers::CTRL, key));
+            (next, previous, number)
+        });
+        let mut pages = vec![Page::Devices];
+        pages.extend(
+            self.tabs
+                .iter()
+                .map(|tab| Page::Emulator(tab.avd.id.clone())),
+        );
+        let current = pages
+            .iter()
+            .position(|page| *page == self.page)
+            .unwrap_or(0);
+        if next {
+            self.page = pages[(current + 1) % pages.len()].clone();
+        } else if previous {
+            self.page = pages[(current + pages.len() - 1) % pages.len()].clone();
+        } else if let Some(index) = number {
+            // Ctrl+1 is Devices, Ctrl+2 the first emulator, ...
+            if let Some(page) = pages.get(index) {
+                self.page = page.clone();
+            }
+        }
+    }
+
+    /// Locks resizing to the active emulator's aspect ratio and sizes the window: the device's
+    /// longer side at 80% of the monitor height the first time, the tab's own size when
+    /// switching to it, swapped when the device turns; the pages keep a size of their own.
+    fn fit_window(&mut self, ctx: &egui::Context, native: &eframe::Frame, tab_bar: f32) {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        if self.window.is_none()
+            && let Ok(handle) = native.window_handle()
+            && let RawWindowHandle::Win32(handle) = handle.as_raw()
+        {
+            window::install(handle.hwnd.get() as _);
+            self.window = Some(handle.hwnd.get());
+        }
+        let info = ctx.input(|input| input.viewport().clone());
+        let (Some(monitor), Some(outer), Some(inner)) =
+            (info.monitor_size, info.outer_rect, info.inner_rect)
+        else {
+            return;
+        };
+        if info.maximized == Some(true) || info.fullscreen == Some(true) {
+            window::set_layout(0.0, (0, 0));
+            return;
+        }
+        let pixels_per_point = ctx.pixels_per_point();
+        let ppp_bits = pixels_per_point.to_bits();
+        let chrome = outer.size() - inner.size();
+        if let Some((target, since)) = self.fit.pending
+            && ((inner.size() - target).length() < 2.0
+                || since.elapsed() > Duration::from_millis(600))
+        {
+            self.fit.pending = None;
+        }
+
+        let (layout, extras, aspect, shape) = match &self.page {
+            Page::Emulator(id) => {
+                let Some(tab) = self.tab(id) else { return };
+                let Some(aspect) = tab.aspect() else {
+                    window::set_layout(0.0, (0, 0));
+                    return;
+                };
+                let layout = Layout::Emulator {
+                    id: id.clone(),
+                    sideways: tab.rotation.sideways(),
+                    pixels_per_point: ppp_bits,
+                };
+                (
+                    layout,
+                    vec2(TOOLBAR_WIDTH, tab_bar),
+                    aspect,
+                    tab.device_shape(),
+                )
+            }
+            _ => {
+                window::set_layout(0.0, (0, 0));
+                let layout = Layout::Page {
+                    pixels_per_point: ppp_bits,
+                };
+                (layout, egui::Vec2::ZERO, 0.0, (0, 0))
+            }
+        };
+        if aspect > 0.0 {
+            window::set_layout(
+                aspect,
+                (
+                    (extras.x * pixels_per_point).round() as i32,
+                    (extras.y * pixels_per_point).round() as i32,
+                ),
+            );
+        }
+
+        if self.fit.layout.as_ref() == Some(&layout) {
+            // Learn the size the user gave the window.
+            if self.fit.pending.is_none() {
+                match &self.page {
+                    Page::Emulator(id) => {
+                        let id = id.clone();
+                        if let Some(tab) = self.tab_mut(&id) {
+                            tab.screen_size = Some(inner.size() - extras);
+                        }
+                    }
+                    _ => self.fit.page_size = Some(inner.size()),
+                }
+            }
+            return;
+        }
+
+        let previous = self.fit.layout.replace(layout.clone());
+        let mut keep_center = false;
+        let size = match &layout {
+            Layout::Page { .. } => self.fit.page_size.unwrap_or(vec2(960.0, 640.0)),
+            Layout::Emulator { id, sideways, .. } => {
+                let id = id.clone();
+                let tab = self.tab_mut(&id).expect("tab");
+                let screen = match (&previous, tab.screen_size) {
+                    (_, None) => {
+                        let (width, height) = display::initial_screen_size(monitor.y, 0.8, shape);
+                        vec2(width, height)
+                    }
+                    // Turned: same size on screen, the other way round.
+                    (
+                        Some(Layout::Emulator {
+                            id: before,
+                            sideways: was,
+                            ..
+                        }),
+                        Some(size),
+                    ) if *before == id && was != sideways => {
+                        keep_center = true;
+                        vec2(size.y, size.x)
+                    }
+                    // Back to this tab, or a new DPI: keep the height, fit the width.
+                    (_, Some(size)) => vec2(size.y * aspect, size.y),
+                };
+                tab.screen_size = Some(screen);
+                screen + extras
+            }
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+        self.fit.pending = Some((size, Instant::now()));
+        let new_outer = size + chrome;
+        if !self.fit.placed {
+            self.fit.placed = true;
+            let position = match self.config.window {
+                Some(saved) => pos2(saved.x, saved.y),
+                // Centered on the monitor the window opened on (the primary one, at the origin).
+                None => pos2(
+                    (monitor.x - new_outer.x) / 2.0,
+                    (monitor.y - new_outer.y) / 2.0,
+                ),
+            };
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(position));
+        } else if keep_center {
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
+                outer.center() - new_outer / 2.0,
+            ));
+        }
+    }
+
+    /// Installs dropped APKs and copies other dropped files to `/sdcard/Download`, with adb.
+    fn handle_dropped_files(&mut self) {
+        let adb = self.tools.adb.as_ref().map(|adb| adb.path.clone());
+        let env = self.tools.child_env();
+        for tab in &mut self.tabs {
+            let files = std::mem::take(&mut tab.dropped);
+            if files.is_empty() {
+                continue;
+            }
+            let (Some(adb), Some(port)) = (adb.clone(), tab.console_port()) else {
+                tab.notify("adb was not found (see Settings)".to_owned());
+                continue;
+            };
+            let state = tab.session.state.clone();
+            let env = env.clone();
+            tab.notify(format!("Sending {} file(s)…", files.len()));
+            std::thread::spawn(move || {
+                for file in files {
+                    let name = file
+                        .file_name()
+                        .map_or(String::new(), |name| name.to_string_lossy().into_owned());
+                    let apk = file
+                        .extension()
+                        .is_some_and(|extension| extension.eq_ignore_ascii_case("apk"));
+                    let serial = format!("emulator-{port}");
+                    let path = file.display().to_string();
+                    let args: Vec<&str> = if apk {
+                        vec!["-s", &serial, "install", "-r", "-t", &path]
+                    } else {
+                        vec!["-s", &serial, "push", &path, "/sdcard/Download/"]
+                    };
+                    let output = adb_command(&adb, &args, &env);
+                    let text = match output {
+                        Ok(_) if apk => format!("Installed {name}"),
+                        Ok(_) => format!("Copied {name} to /sdcard/Download"),
+                        Err(error) => {
+                            format!("{name}: {}", error.lines().last().unwrap_or("failed"))
+                        }
+                    };
+                    state.lock().unwrap().notice = Some(text);
+                }
+            });
+        }
+    }
+
+    /// Docks the Extended Controls window beside Avdeck once it appears (within 3 s).
+    fn dock_extended_controls(&mut self, ctx: &egui::Context) {
+        let owner = self.window;
+        for tab in &mut self.tabs {
+            let Some(started) = tab.extended_search else {
+                continue;
+            };
+            let found = tab.pid().and_then(extended::find);
+            if let (Some(window), Some(owner)) = (found, owner) {
+                extended::attach(window, owner as _);
+                tab.extended_search = None;
+            } else if started.elapsed() > Duration::from_secs(3) {
+                tab.extended_search = None;
+            } else {
+                ctx.request_repaint_after(Duration::from_millis(100));
+            }
+        }
+    }
+}
+
+impl eframe::App for App {
+    fn ui(&mut self, ui: &mut egui::Ui, native: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.rescan(false);
+        if ctx.input_mut(|input| {
+            input.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::D)
+        }) {
+            self.debug = !self.debug;
+        }
+        if ctx.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::Comma)) {
+            self.page = Page::Settings;
+        }
+        // Requests from `avdeck --avd NAME` started again.
+        for id in crate::instance::take() {
+            if !id.is_empty() {
+                self.open(&ctx, &id);
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        for tab in &mut self.tabs {
+            tab.update(&ctx);
+        }
+        // Buttons inside a tab that need the app.
+        let requests: Vec<(String, crate::tab::Request)> = self
+            .tabs
+            .iter_mut()
+            .filter_map(|tab| Some((tab.avd.id.clone(), tab.request.take()?)))
+            .collect();
+        for (id, request) in requests {
+            self.close_tab(&id);
+            if matches!(request, crate::tab::Request::Restart) {
+                self.rescan(true);
+                self.open(&ctx, &id);
+            }
+        }
+        // Only the shown tab streams frames.
+        let previous_extended = extended::docked_pid();
+        for tab in &self.tabs {
+            let shown = self.page == Page::Emulator(tab.avd.id.clone());
+            tab.session.set_visible(shown);
+            // Another tab's Extended Controls window goes away with its tab.
+            if !shown && tab.pid().is_some() && tab.pid() == previous_extended {
+                extended::detach();
+            }
+        }
+
+        let chrome = theme::palette(ui).chrome;
+        let tab_bar = egui::Panel::top("tabs")
+            .frame(
+                egui::Frame::NONE
+                    .fill(chrome)
+                    .inner_margin(egui::Margin::symmetric(8, 6)),
+            )
+            .show(ui, |ui| self.tab_bar(ui, &ctx));
+        let tab_bar_height = tab_bar.response.rect.height();
+
+        match self.page.clone() {
+            Page::Emulator(id) => {
+                let debug = self.debug;
+                if let Some(tab) = self.tab_mut(&id) {
+                    egui::Panel::right("toolbar")
+                        .resizable(false)
+                        .exact_size(TOOLBAR_WIDTH)
+                        .frame(egui::Frame::NONE.fill(chrome))
+                        .show(ui, |ui| tab.toolbar(ui));
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::NONE.fill(Color32::BLACK))
+                        .show(ui, |ui| {
+                            if let Some(size) = tab.screen(ui, debug) {
+                                tab.session.set_view_size(size);
+                            }
+                        });
+                } else {
+                    self.page = Page::Devices;
+                }
+            }
+            Page::Devices => {
+                egui::CentralPanel::default().show(ui, |ui| crate::devices::show(self, ui, &ctx));
+            }
+            Page::Settings => {
+                egui::CentralPanel::default().show(ui, |ui| crate::settings::show(self, ui));
+            }
+        }
+
+        self.dialogs(&ctx);
+        self.fit_window(&ctx, native, tab_bar_height);
+        self.dock_extended_controls(&ctx);
+        self.handle_dropped_files();
+        self.handle_close_request(&ctx);
+        // Keep statuses fresh on the Devices page.
+        if self.page == Page::Devices {
+            ctx.request_repaint_after(Duration::from_secs(1));
+        }
+    }
+}
+
+/// Runs adb without a console window; the error is its output.
+fn adb_command(
+    adb: &std::path::Path,
+    args: &[&str],
+    env: &[(&'static str, std::ffi::OsString)],
+) -> Result<String, String> {
+    use std::os::windows::process::CommandExt;
+    let output = std::process::Command::new(adb)
+        .args(args)
+        .envs(env.iter().map(|(name, value)| (name, value)))
+        .creation_flags(0x0800_0000)
+        .output()
+        .map_err(|error| error.to_string())?;
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    if output.status.success() && !text.contains("Failure") {
+        Ok(text)
+    } else {
+        Err(text.trim().to_owned())
+    }
+}
+
+/// A tab in the tab bar: optional status dot or icon, the label, and a close button shown on
+/// hover and when selected. Returns (clicked, close clicked, response).
+fn tab_widget(
+    ui: &mut egui::Ui,
+    selected: bool,
+    dot: Option<Color32>,
+    glyph: Option<&str>,
+    label: &str,
+    closable: bool,
+) -> (bool, bool, egui::Response) {
+    let palette = theme::palette(ui);
+    let font = egui::FontId::proportional(13.5);
+    let text_color = if selected {
+        palette.text
+    } else {
+        palette.muted
+    };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font, text_color);
+    let lead = if dot.is_some() || glyph.is_some() {
+        22.0
+    } else {
+        0.0
+    };
+    let tail = if closable { 24.0 } else { 0.0 };
+    let size = vec2(12.0 + lead + galley.size().x + tail + 12.0, 32.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let hovered = response.hovered();
+    let painter = ui.painter();
+    if selected {
+        painter.rect_filled(rect, egui::CornerRadius::same(8), palette.surface);
+        painter.rect_stroke(
+            rect,
+            egui::CornerRadius::same(8),
+            egui::Stroke::new(1.0, palette.border),
+            egui::StrokeKind::Inside,
+        );
+    } else if hovered {
+        painter.rect_filled(rect, egui::CornerRadius::same(8), palette.surface_hover);
+    }
+    let mut x = rect.left() + 12.0;
+    if let Some(color) = dot {
+        painter.circle_filled(pos2(x + 5.0, rect.center().y), 4.0, color);
+        x += lead;
+    } else if let Some(glyph) = glyph {
+        painter.text(
+            pos2(x + 6.0, rect.center().y),
+            egui::Align2::CENTER_CENTER,
+            glyph,
+            egui::FontId::proportional(16.0),
+            text_color,
+        );
+        x += lead;
+    }
+    painter.galley(
+        pos2(x, rect.center().y - galley.size().y / 2.0),
+        galley,
+        text_color,
+    );
+    let mut closed = false;
+    if closable && (hovered || selected) {
+        let close = egui::Rect::from_center_size(
+            pos2(rect.right() - 20.0, rect.center().y),
+            vec2(20.0, 20.0),
+        );
+        let close_response = ui.interact(close, response.id.with("close"), egui::Sense::click());
+        if close_response.hovered() {
+            ui.painter()
+                .rect_filled(close, egui::CornerRadius::same(6), palette.surface_hover);
+        }
+        ui.painter().text(
+            close.center(),
+            egui::Align2::CENTER_CENTER,
+            icons::CLOSE,
+            egui::FontId::proportional(12.0),
+            palette.muted,
+        );
+        closed = close_response.on_hover_text("Close tab").clicked();
+    }
+    (response.clicked() && !closed, closed, response)
+}
+
+/// A centered modal dialog.
+pub fn modal(ctx: &egui::Context, id: &str, content: impl FnOnce(&mut egui::Ui)) {
+    egui::Modal::new(egui::Id::unique(id))
+        .frame(
+            egui::Frame::popup(&ctx.style_of(ctx.theme()))
+                .inner_margin(egui::Margin::same(22))
+                .corner_radius(egui::CornerRadius::same(14)),
+        )
+        .show(ctx, |ui| {
+            ui.set_min_width(380.0);
+            ui.set_max_width(520.0);
+            ui.spacing_mut().item_spacing.y = 10.0;
+            content(ui);
+        });
+}

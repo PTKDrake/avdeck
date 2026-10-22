@@ -1,7 +1,10 @@
 [package]
 name = "avdeck-core"
-description = "SDK and AVD discovery for Avdeck, independent of the UI"
+description = "SDK, AVD and emulator process management for Avdeck, independent of the UI"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
+serde.workspace = true
+toml.workspace = true
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Threading"] }

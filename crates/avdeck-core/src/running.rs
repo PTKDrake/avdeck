@@ -78,6 +78,30 @@ pub fn list() -> Vec<Running> {
         .collect()
 }
 
+/// The process exists and has not exited.
+pub fn alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if process.is_null() {
+        return false;
+    }
+    let mut code = 0;
+    let ok = unsafe { GetExitCodeProcess(process, &mut code) } != 0;
+    unsafe { CloseHandle(process) };
+    ok && code == STILL_ACTIVE as u32
+}
+
+/// Discovery files of emulators that are still running.
+pub fn live() -> Vec<Running> {
+    list()
+        .into_iter()
+        .filter(|running| alive(running.pid))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,6 +134,12 @@ grpc.allowlist=D:\Android\SDK\emulator\lib\emulator_access.json
         // Base64 tokens end in '=', which must survive splitting on the first '='.
         assert_eq!(running.grpc_token.as_deref(), Some("abc+def/ghi="));
         assert!(!format!("{running:?}").contains("abc"));
+    }
+
+    #[test]
+    fn this_process_is_alive_and_a_bogus_pid_is_not() {
+        assert!(alive(std::process::id()));
+        assert!(!alive(0xFFFF_FFF0));
     }
 
     #[test]

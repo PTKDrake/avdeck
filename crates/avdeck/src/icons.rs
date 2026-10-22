@@ -13,6 +13,24 @@ pub const BACK: &str = "\u{E138}";
 pub const HOME: &str = "\u{E18A}";
 pub const OVERVIEW: &str = "\u{E45E}";
 pub const MORE: &str = "\u{E1FE}";
+pub const FOLD: &str = "\u{E530}";
+pub const DEVICES: &str = "\u{E1E0}";
+pub const SETTINGS: &str = "\u{E270}";
+pub const CLOSE: &str = "\u{E4F6}";
+pub const START: &str = "\u{E3D0}";
+pub const STOP: &str = "\u{E46C}";
+pub const ADD: &str = "\u{E3D4}";
+pub const FOLDER: &str = "\u{E256}";
+pub const REFRESH: &str = "\u{E094}";
+pub const DELETE: &str = "\u{E4A6}";
+pub const DUPLICATE: &str = "\u{E1CA}";
+pub const EDIT: &str = "\u{E3B4}";
+pub const MISSING: &str = "\u{E4F8}";
+pub const WARNING: &str = "\u{E4E0}";
+pub const DOWNLOAD: &str = "\u{E20C}";
+pub const SNAPSHOT: &str = "\u{E1DA}";
+pub const SEARCH: &str = "\u{E30C}";
+pub const CHECK: &str = "\u{E182}";
 
 /// Adds the icon font as a fallback of the proportional family.
 pub fn install(fonts: &mut FontDefinitions) {
@@ -23,6 +41,7 @@ pub fn install(fonts: &mut FontDefinitions) {
         ))),
     );
     if let Some(family) = fonts.families.get_mut(&FontFamily::Proportional) {
-        family.push("phosphor".to_owned());
+        // First: Inter also has glyphs in the Private Use Area where Phosphor's icons live.
+        family.insert(0, "phosphor".to_owned());
     }
 }

@@ -102,6 +102,18 @@ pub fn owner_moved(owner: HWND) {
     }
 }
 
+/// The process owning the docked window, if one is docked.
+pub fn docked_pid() -> Option<u32> {
+    let docked = DOCKED.lock().unwrap();
+    let window = docked.as_ref()?.window as HWND;
+    if unsafe { IsWindow(window) } == 0 {
+        return None;
+    }
+    let mut pid = 0;
+    unsafe { GetWindowThreadProcessId(window, &mut pid) };
+    Some(pid)
+}
+
 /// Before Avdeck's window closes: gives the window back to the emulator and hides it, so Windows
 /// never destroys a window of another process along with its owner.
 pub fn detach() {

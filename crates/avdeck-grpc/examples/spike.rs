@@ -117,11 +117,12 @@ async fn main() -> Result<()> {
     println!("booted after {:.1}s", started.elapsed().as_secs_f64());
     print_discovery();
     if let Some(avd) = &options.avd {
-        let homes = avdeck_core::avd::avd_homes(None);
-        println!(
-            "config.ini panel: {:?}",
-            avdeck_core::avd::panel_size(&homes, avd)
-        );
+        let tools = avdeck_core::sdk::resolve(&Default::default(), &avdeck_core::sdk::System);
+        let panel = tools
+            .avd_home
+            .and_then(|home| avdeck_core::avd::Avd::read(&home.path, avd))
+            .and_then(|avd| avd.panel);
+        println!("config.ini panel: {panel:?}");
     }
 
     // Single screenshots: PNG as delivered, RGBA saved as-is to check the row order.
