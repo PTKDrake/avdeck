@@ -262,8 +262,7 @@ fn card(app: &mut App, ui: &mut egui::Ui, ctx: &egui::Context, avd: &Avd, width:
                     let more = theme::icon(ui, icons::MORE, "More", 32.0);
                     let running = !matches!(state, Status::Stopped | Status::NotResponding);
                     egui::Popup::menu(&more).show(|ui| {
-                        ui.set_min_width(210.0);
-                        menu(app, ui, ctx, avd, running);
+                        theme::menu(ui, 220.0, |ui| menu(app, ui, ctx, avd, running));
                     });
                 });
             });
@@ -272,13 +271,7 @@ fn card(app: &mut App, ui: &mut egui::Ui, ctx: &egui::Context, avd: &Avd, width:
 }
 
 fn item(ui: &mut egui::Ui, glyph: &str, text: &str, enabled: bool) -> bool {
-    ui.add_enabled(
-        enabled,
-        egui::Button::new(format!("{glyph}   {text}"))
-            .frame(false)
-            .min_size(vec2(ui.available_width(), 28.0)),
-    )
-    .clicked()
+    theme::menu_item(ui, glyph, text, enabled).clicked()
 }
 
 type Action = Box<dyn FnOnce(&mut App)>;

@@ -127,6 +127,8 @@ fn style(palette: &Palette, dark: bool) -> egui::Style {
         .into(),
         ..Default::default()
     };
+    // Labels are not text to select; text fields still are.
+    style.interaction.selectable_labels = false;
     let spacing = &mut style.spacing;
     spacing.item_spacing = vec2(8.0, 8.0);
     spacing.button_padding = vec2(12.0, 6.0);
@@ -348,6 +350,100 @@ pub fn device(
         }
     }
     inner
+}
+
+/// A popup menu's content: fixed width, items filling it, left-aligned.
+pub fn menu<R>(ui: &mut Ui, width: f32, content: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.set_width(width);
+    // One line per item; long ones end in "…".
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+    ui.spacing_mut().button_padding = vec2(10.0, 7.0);
+    ui.spacing_mut().item_spacing.y = 2.0;
+    // Disabled items stay readable.
+    ui.visuals_mut().widgets.noninteractive.fg_stroke.color = palette(ui).faint;
+    ui.with_layout(egui::Layout::top_down_justified(egui::Align::Min), content)
+        .inner
+}
+
+/// A menu item: icon and text, left-aligned, full width.
+pub fn menu_item(ui: &mut Ui, glyph: &str, text: &str, enabled: bool) -> Response {
+    ui.add_enabled(
+        enabled,
+        egui::Button::new(format!("{glyph}   {text}")).frame_when_inactive(false),
+    )
+}
+
+/// A large clickable choice in a dialog: icon, title and what choosing it does. The
+/// recommended one has an accent border.
+pub fn option_card(
+    ui: &mut Ui,
+    glyph: &str,
+    title: &str,
+    detail: &str,
+    recommended: bool,
+) -> Response {
+    let palette = palette(ui);
+    let width = ui.available_width();
+    let detail_galley = ui.painter().layout(
+        detail.to_owned(),
+        FontId::proportional(12.5),
+        palette.muted,
+        width - 72.0,
+    );
+    let height = (22.0 + detail_galley.size().y + 26.0).max(62.0);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click());
+    let hovered = response.hovered();
+    let painter = ui.painter();
+    let border = if hovered || recommended {
+        palette.accent
+    } else {
+        palette.border
+    };
+    painter.rect_filled(
+        rect,
+        CornerRadius::same(10),
+        if hovered {
+            palette.surface_hover
+        } else {
+            palette.surface
+        },
+    );
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(10),
+        Stroke::new(if recommended { 1.5 } else { 1.0 }, border),
+        egui::StrokeKind::Inside,
+    );
+    let icon = pos2(rect.left() + 30.0, rect.center().y);
+    painter.circle_filled(
+        icon,
+        16.0,
+        palette
+            .accent
+            .gamma_multiply(if recommended { 0.25 } else { 0.12 }),
+    );
+    painter.text(
+        icon,
+        egui::Align2::CENTER_CENTER,
+        glyph,
+        FontId::proportional(17.0),
+        palette.accent,
+    );
+    let text_left = rect.left() + 58.0;
+    let title_top = rect.top() + (height - 20.0 - detail_galley.size().y) / 2.0;
+    painter.text(
+        pos2(text_left, title_top),
+        egui::Align2::LEFT_TOP,
+        title,
+        FontId::new(14.5, semibold()),
+        palette.text,
+    );
+    painter.galley(
+        pos2(text_left, title_top + 20.0),
+        detail_galley,
+        palette.muted,
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// A card: surface, border, rounded, with padding.

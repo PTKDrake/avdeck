@@ -86,6 +86,8 @@ pub struct App {
     pub stopping: std::collections::HashMap<String, Stopping>,
     /// AVDs to start as soon as their previous process is gone.
     start_when_stopped: std::collections::HashSet<String>,
+    /// The page the tab bar showed last frame, to scroll a newly selected tab into view.
+    shown_page: Option<Page>,
     /// Remember the choice in the close dialogs.
     remember: bool,
     /// Ctrl+Shift+D: DPI, sizes and frame rate over the screen.
@@ -120,6 +122,7 @@ impl App {
             search: String::new(),
             stopping: Default::default(),
             start_when_stopped: Default::default(),
+            shown_page: None,
             remember: false,
             debug: false,
             closing: false,
@@ -476,22 +479,48 @@ impl App {
                     ui.label(theme::title(format!("Close {name}?"), 18.0));
                     ui.label(theme::muted(
                         ui,
-                        "The device can keep running in the background; open it again from Devices.",
+                        "The tab closes. What happens to the device?",
                     ));
-                    ui.checkbox(&mut self.remember, "Remember my choice");
                     ui.add_space(4.0);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if theme::primary(ui, "Keep running").clicked() {
-                            choice = Some(false);
-                        }
-                        if theme::secondary(ui, format!("{}  Stop device", icons::STOP)).clicked() {
-                            choice = Some(true);
-                        }
-                        if ui.add(egui::Button::new("Cancel").frame(false)).clicked() {
-                            keep = false;
-                        }
-                    });
+                    if theme::option_card(
+                        ui,
+                        icons::START,
+                        "Keep it running",
+                        "It goes on in the background; open it again from Devices.",
+                        true,
+                    )
+                    .clicked()
+                    {
+                        choice = Some(false);
+                    }
+                    if theme::option_card(
+                        ui,
+                        icons::POWER,
+                        "Stop the device",
+                        "Its state is saved; the next start resumes where it left off.",
+                        false,
+                    )
+                    .clicked()
+                    {
+                        choice = Some(true);
+                    }
+                    if footer(ui, &mut self.remember) {
+                        keep = false;
+                    }
                 });
+                // Enter takes the recommended choice, Escape cancels.
+                let (enter, escape) = ctx.input(|input| {
+                    (
+                        input.key_pressed(egui::Key::Enter),
+                        input.key_pressed(egui::Key::Escape),
+                    )
+                });
+                if enter && choice.is_none() {
+                    choice = Some(false);
+                }
+                if escape {
+                    keep = false;
+                }
                 if let Some(stop) = choice {
                     if self.remember {
                         self.config.close_tab = if stop {
@@ -513,30 +542,58 @@ impl App {
                 let mut choice = None;
                 modal(ctx, "close-app", |ui| {
                     ui.label(theme::title("Close Avdeck?", 18.0));
-                    let names: Vec<&str> =
-                        self.tabs.iter().map(|tab| tab.avd.name.as_str()).collect();
+                    let names: Vec<&str> = self
+                        .tabs
+                        .iter()
+                        .filter(|tab| !matches!(tab.phase(), Phase::Ended(_)))
+                        .map(|tab| tab.avd.name.as_str())
+                        .collect();
                     ui.label(theme::muted(
                         ui,
-                        format!(
-                            "{} still running. They can keep running in the background; Avdeck \
-                             reopens their tabs next time.",
-                            names.join(", ")
-                        ),
+                        format!("Still running: {}.", names.join(", ")),
                     ));
-                    ui.checkbox(&mut self.remember, "Remember my choice");
                     ui.add_space(4.0);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if theme::primary(ui, "Keep running").clicked() {
-                            choice = Some(false);
-                        }
-                        if theme::secondary(ui, format!("{}  Stop all", icons::STOP)).clicked() {
-                            choice = Some(true);
-                        }
-                        if ui.add(egui::Button::new("Cancel").frame(false)).clicked() {
-                            keep = false;
-                        }
-                    });
+                    let one = names.len() == 1;
+                    let (keep_title, keep_detail, stop_title, stop_detail) = if one {
+                        (
+                            "Keep it running",
+                            "It goes on in the background; Avdeck reopens its tab next time.",
+                            "Stop it",
+                            "Its state is saved; the next start resumes where it left off.",
+                        )
+                    } else {
+                        (
+                            "Keep them running",
+                            "They go on in the background; Avdeck reopens their tabs next time.",
+                            "Stop them all",
+                            "Their state is saved; the next start resumes where they left off.",
+                        )
+                    };
+                    if theme::option_card(ui, icons::START, keep_title, keep_detail, true).clicked()
+                    {
+                        choice = Some(false);
+                    }
+                    if theme::option_card(ui, icons::POWER, stop_title, stop_detail, false)
+                        .clicked()
+                    {
+                        choice = Some(true);
+                    }
+                    if footer(ui, &mut self.remember) {
+                        keep = false;
+                    }
                 });
+                let (enter, escape) = ctx.input(|input| {
+                    (
+                        input.key_pressed(egui::Key::Enter),
+                        input.key_pressed(egui::Key::Escape),
+                    )
+                });
+                if enter && choice.is_none() {
+                    choice = Some(false);
+                }
+                if escape {
+                    keep = false;
+                }
                 if let Some(stop) = choice {
                     self.close_app(ctx, stop);
                     keep = false;
@@ -578,77 +635,99 @@ impl App {
         let palette = theme::palette(ui);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            if tab_widget(
-                ui,
-                self.page == Page::Devices,
-                None,
-                Some(icons::DEVICES),
-                "Devices",
-                false,
-            )
-            .0
-            {
-                self.page = Page::Devices;
+            // Settings stays pinned on the right; the tabs scroll in the rest when they overflow.
+            let strip = (ui.available_width() - 38.0).max(0.0);
+            // The wheel scrolls the tabs sideways over the strip, no Ctrl or Shift needed.
+            let strip_rect = egui::Rect::from_min_size(ui.cursor().min, vec2(strip, 40.0));
+            if ui.rect_contains_pointer(strip_rect) {
+                ui.ctx().input_mut(|input| {
+                    let delta = input.smooth_scroll_delta;
+                    input.smooth_scroll_delta = vec2(delta.x + delta.y, 0.0);
+                });
             }
-            let mut close = None;
-            for tab in &self.tabs {
-                let selected = self.page == Page::Emulator(tab.avd.id.clone());
-                let dot = match tab.phase() {
-                    Phase::Starting => palette.warning,
-                    Phase::Running => palette.success,
-                    Phase::Ended(_) => palette.danger,
-                };
-                let (clicked, closed, response) =
-                    tab_widget(ui, selected, Some(dot), None, &tab.avd.name, true);
-                if clicked {
-                    self.page = Page::Emulator(tab.avd.id.clone());
-                }
-                if closed || response.middle_clicked() {
-                    close = Some(tab.avd.id.clone());
-                }
-            }
-            if let Some(id) = close {
-                self.request_close_tab(&id);
-            }
-            // Open another device without going through the Devices page.
-            let add = theme::icon(ui, icons::ADD, "Open a device", 30.0);
-            egui::Popup::menu(&add).show(|ui| {
-                ui.set_min_width(220.0);
-                let closed: Vec<Avd> = self
-                    .avds
-                    .iter()
-                    .filter(|avd| self.tab(&avd.id).is_none())
-                    .cloned()
-                    .collect();
-                if closed.is_empty() {
-                    ui.label(theme::muted(ui, "Every device is open."));
-                }
-                for avd in closed {
-                    let running = self.live_grpc(&avd.id).is_some();
-                    let glyph = if running {
-                        icons::DEVICES
-                    } else {
-                        icons::START
-                    };
-                    let text = format!("{glyph}   {}", avd.name);
-                    if ui
-                        .add(
-                            egui::Button::new(text)
-                                .frame(false)
-                                .min_size(vec2(ui.available_width(), 28.0)),
-                        )
-                        .on_hover_text(if running {
-                            "Running: open it"
-                        } else {
-                            "Start it"
-                        })
-                        .clicked()
-                    {
-                        self.open(ctx, &avd.id);
-                        ui.close();
-                    }
-                }
-            });
+            egui::ScrollArea::horizontal()
+                .id_salt("tab-strip")
+                .max_width(strip)
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        // In a narrow window (a phone at its smallest) Devices is just its icon.
+                        let label = if strip < 380.0 { "" } else { "Devices" };
+                        let (devices, _, response) = tab_widget(
+                            ui,
+                            self.page == Page::Devices,
+                            None,
+                            Some(icons::DEVICES),
+                            label,
+                            false,
+                        );
+                        if label.is_empty() {
+                            response.on_hover_text("Devices (Ctrl+1)");
+                        }
+                        if devices {
+                            self.page = Page::Devices;
+                        }
+                        let mut close = None;
+                        for tab in &self.tabs {
+                            let selected = self.page == Page::Emulator(tab.avd.id.clone());
+                            let dot = match tab.phase() {
+                                Phase::Starting => palette.warning,
+                                Phase::Running => palette.success,
+                                Phase::Ended(_) => palette.danger,
+                            };
+                            let (clicked, closed, response) =
+                                tab_widget(ui, selected, Some(dot), None, &tab.avd.name, true);
+                            if clicked {
+                                self.page = Page::Emulator(tab.avd.id.clone());
+                            }
+                            // Bring the selected tab into view when the page changed (opened, Ctrl+Tab, ...).
+                            if selected && self.shown_page.as_ref() != Some(&self.page) {
+                                response.scroll_to_me(None);
+                            }
+                            if closed || response.middle_clicked() {
+                                close = Some(tab.avd.id.clone());
+                            }
+                        }
+                        if let Some(id) = close {
+                            self.request_close_tab(&id);
+                        }
+                        // Open another device without going through the Devices page.
+                        let add = theme::icon(ui, icons::ADD, "Open a device", 30.0);
+                        egui::Popup::menu(&add).show(|ui| {
+                            theme::menu(ui, 240.0, |ui| {
+                                let closed: Vec<Avd> = self
+                                    .avds
+                                    .iter()
+                                    .filter(|avd| self.tab(&avd.id).is_none())
+                                    .cloned()
+                                    .collect();
+                                if closed.is_empty() {
+                                    ui.label(theme::muted(ui, "Every device is open."));
+                                }
+                                for avd in closed {
+                                    let running = self.live_grpc(&avd.id).is_some();
+                                    let glyph = if running {
+                                        icons::DEVICES
+                                    } else {
+                                        icons::START
+                                    };
+                                    if theme::menu_item(ui, glyph, &avd.name, true)
+                                        .on_hover_text(if running {
+                                            "Running: open it"
+                                        } else {
+                                            "Start it"
+                                        })
+                                        .clicked()
+                                    {
+                                        self.open(ctx, &avd.id);
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        });
+                    });
+                });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let settings = theme::icon(ui, icons::SETTINGS, "Settings (Ctrl+,)", 30.0);
                 if self.page == Page::Settings {
@@ -1010,6 +1089,7 @@ impl eframe::App for App {
         }
 
         let chrome = theme::palette(ui).chrome;
+        let tab_bar_page = self.page.clone();
         let tab_bar = egui::Panel::top("tabs")
             .frame(
                 egui::Frame::NONE
@@ -1018,6 +1098,7 @@ impl eframe::App for App {
             )
             .show(ui, |ui| self.tab_bar(ui, &ctx));
         let tab_bar_height = tab_bar.response.rect.height();
+        self.shown_page = Some(tab_bar_page);
 
         match self.page.clone() {
             Page::Emulator(id) => {
@@ -1098,16 +1179,23 @@ fn tab_widget(
     } else {
         palette.muted
     };
-    let galley = ui
-        .painter()
-        .layout_no_wrap(label.to_owned(), font, text_color);
+    // Long names end in "…"; the full name shows on hover.
+    let mut job = egui::text::LayoutJob::simple_singleline(label.to_owned(), font, text_color);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(150.0);
+    let galley = ui.painter().layout_job(job);
+    let elided = galley.elided;
     let lead = if dot.is_some() || glyph.is_some() {
         22.0
     } else {
         0.0
     };
     let tail = if closable { 24.0 } else { 0.0 };
-    let size = vec2(12.0 + lead + galley.size().x + tail + 12.0, 32.0);
+    let text_width = if label.is_empty() {
+        -8.0
+    } else {
+        galley.size().x
+    };
+    let size = vec2(12.0 + lead + text_width + tail + 12.0, 32.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     let hovered = response.hovered();
     let painter = ui.painter();
@@ -1161,7 +1249,26 @@ fn tab_widget(
         );
         closed = close_response.on_hover_text("Close tab").clicked();
     }
+    let response = if elided {
+        response.on_hover_text(label)
+    } else {
+        response
+    };
     (response.clicked() && !closed, closed, response)
+}
+
+/// The bottom of a choice dialog: "Remember my choice" on the left, Cancel on the right.
+/// Returns whether Cancel was clicked.
+fn footer(ui: &mut egui::Ui, remember: &mut bool) -> bool {
+    ui.add_space(2.0);
+    ui.horizontal(|ui| {
+        ui.checkbox(remember, "Remember my choice");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            theme::secondary(ui, "Cancel").clicked()
+        })
+        .inner
+    })
+    .inner
 }
 
 /// The button row of a dialog: right-aligned, wrapping when the dialog is narrow.
