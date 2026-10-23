@@ -1233,6 +1233,8 @@ fn tab_widget(
     };
     let size = vec2(12.0 + lead + text_width + tail + 12.0, 32.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    // Named for screen readers and UI Automation, which see only what widgets describe.
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, selected, label));
     let hovered = response.hovered();
     let painter = ui.painter();
     if selected {
@@ -1276,6 +1278,9 @@ fn tab_widget(
             vec2(20.0, 20.0),
         );
         let close_response = ui.interact(close, response.id.with("close"), egui::Sense::click());
+        close_response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Close {label}"))
+        });
         if close_response.hovered() {
             ui.painter()
                 .rect_filled(close, egui::CornerRadius::same(6), palette.surface_hover);
