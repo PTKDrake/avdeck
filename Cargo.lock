@@ -430,7 +430,7 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "avdeck"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "avdeck-core",
@@ -445,7 +445,7 @@ dependencies = [
 
 [[package]]
 name = "avdeck-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "toml",
@@ -454,7 +454,7 @@ dependencies = [
 
 [[package]]
 name = "avdeck-grpc"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "avdeck-core",
