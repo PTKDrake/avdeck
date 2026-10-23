@@ -203,6 +203,15 @@ impl App {
     /// A command-line request: open its AVD, starting it with the requested options if needed.
     fn handle_request(&mut self, ctx: &egui::Context, request: &crate::instance::Request) {
         let Some(id) = &request.avd else { return };
+        // A tab whose emulator has exited starts it again, with this request's options; a hung
+        // one only shows, it offers to force a restart itself.
+        let exited = self.tab(id).is_some_and(|tab| {
+            matches!(tab.phase(), Phase::Ended(_)) && !tab.pid().is_some_and(running::alive)
+        });
+        if exited {
+            self.close_tab(id);
+            self.rescan(true);
+        }
         if self.tab(id).is_some() || self.live_grpc(id).is_some() {
             self.open(ctx, id);
         } else {
