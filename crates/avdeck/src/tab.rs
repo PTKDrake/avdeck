@@ -195,6 +195,12 @@ impl EmulatorTab {
             self.frame_size = (frame.width, frame.height);
             self.rotation = Rotation::from_proto(frame.rotation);
         }
+        // Once the emulator is gone (or hung) the last frame would pass for a live screen:
+        // show why instead, with what to do next. The frame size stays, so the window does not
+        // jump.
+        if self.texture.is_some() && matches!(self.phase(), Phase::Ended(_)) {
+            self.texture = None;
+        }
         // An emulator Avdeck started that died before serving gRPC: say why.
         if let Some(child) = &mut self.child
             && let Ok(Some(status)) = child.try_wait()
@@ -415,6 +421,16 @@ impl EmulatorTab {
                         .label(theme::muted(
                             &column,
                             "The emulator is still running but stopped answering.",
+                        ))
+                        .on_hover_text(&reason);
+                } else if self.pid().is_some() {
+                    // It was connected and its process is gone: the transport error says
+                    // nothing more useful than that.
+                    column.label(theme::title("Emulator stopped", 15.0));
+                    column
+                        .label(theme::muted(
+                            &column,
+                            "It exited, crashed or was closed outside Avdeck.",
                         ))
                         .on_hover_text(&reason);
                 } else {
