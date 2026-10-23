@@ -49,6 +49,12 @@ enum Layout {
 /// Narrowest window for a device tab: the tab bar and dialogs still fit.
 const MIN_WINDOW_WIDTH: f32 = 280.0;
 
+/// Shortest time between two frames. Every animation repaints the whole window, and presenting
+/// does not always wait for vsync: on a Radeon 780M (Vulkan and DX12 alike) a hover fade ran at
+/// ~1000 fps and kept the GPU two-thirds busy, against under a tenth at 60 fps. Emulator screens
+/// update at 60 fps at most.
+const FRAME_TIME: Duration = Duration::from_micros(1_000_000 / 60);
+
 /// An emulator asked to stop, until its process is gone.
 pub struct Stopping {
     pub pid: u32,
@@ -94,6 +100,8 @@ pub struct App {
     debug: bool,
     /// The user confirmed closing; let the window close.
     closing: bool,
+    /// When the last frame started, to pace frames to `FRAME_TIME`.
+    last_frame: Option<Instant>,
 }
 
 impl App {
@@ -127,6 +135,7 @@ impl App {
             remember: false,
             debug: false,
             closing: false,
+            last_frame: None,
         };
         app.rescan(true);
         if app.tools.sdk.is_none() || app.tools.emulator.is_none() {
@@ -1014,6 +1023,15 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, native: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // Frames that come early (animations, a busy stream) wait their turn; the first frame
+        // after a quiet spell, such as the answer to a click, does not.
+        if let Some(due) = self.last_frame.map(|last| last + FRAME_TIME) {
+            let now = Instant::now();
+            if due > now {
+                std::thread::sleep(due - now);
+            }
+        }
+        self.last_frame = Some(Instant::now());
         self.rescan(false);
         if ctx.input_mut(|input| {
             input.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::D)
