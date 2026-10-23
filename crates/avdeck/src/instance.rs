@@ -1,6 +1,7 @@
 //! The command line, and one Avdeck at a time: starting it again (`avdeck --avd NAME`, as
 //! `start-emulator.ps1` does) hands the request to the running window through `WM_COPYDATA`
-//! and exits.
+//! and exits. Only a window of the same executable counts, so a development build or a copy
+//! run for testing stays apart from the installed Avdeck.
 //!
 //! ```text
 //! avdeck [--avd NAME] [--cold-boot] [--wipe-data] [--no-snapshot-save] [--gpu MODE]
@@ -169,7 +170,7 @@ fn find() -> Option<(HWND, u32)> {
         }
         let mut pid = 0;
         unsafe { GetWindowThreadProcessId(window, &mut pid) };
-        if pid != search.own && is_avdeck(pid) {
+        if pid != search.own && runs_this_executable(pid) {
             search.found = Some((window, pid));
             return 0;
         }
@@ -183,7 +184,10 @@ fn find() -> Option<(HWND, u32)> {
     search.found
 }
 
-fn is_avdeck(pid: u32) -> bool {
+fn runs_this_executable(pid: u32) -> bool {
+    let Ok(own) = std::env::current_exe() else {
+        return false;
+    };
     let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
     if process.is_null() {
         return false;
@@ -194,9 +198,8 @@ fn is_avdeck(pid: u32) -> bool {
         QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, path.as_mut_ptr(), &mut length)
     } != 0;
     unsafe { windows_sys::Win32::Foundation::CloseHandle(process) };
-    ok && String::from_utf16_lossy(&path[..length as usize])
-        .to_lowercase()
-        .ends_with("\\avdeck.exe")
+    ok && String::from_utf16_lossy(&path[..length as usize]).to_lowercase()
+        == own.to_string_lossy().to_lowercase()
 }
 
 #[cfg(test)]
