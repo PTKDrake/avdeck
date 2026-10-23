@@ -339,7 +339,6 @@ async fn stream_frames(
     const HOLD: Duration = Duration::from_millis(250);
     // A resize restarts the stream only once the size has been still this long.
     const SETTLE: Duration = Duration::from_millis(300);
-    let frames = SharedFrames::new(natural.0, natural.1)?;
     let mut shown: Vec<Instant> = Vec::new();
     loop {
         while !*visible.borrow_and_update() {
@@ -348,6 +347,10 @@ async fn stream_frames(
             }
         }
         let size = *view.borrow_and_update();
+        // A fresh region for every stream: restarting at another size on the region of the
+        // stream just cancelled crashes emulator 37.2.12 while frames are flowing (boot
+        // animation), with any `-gpu` mode.
+        let frames = SharedFrames::new(natural.0, natural.1)?;
         // Never more than the device's own resolution: the emulator only scales down.
         // The emulator scales down to fit this box, never above the device's resolution.
         let request = frames.request(size.0, size.1);
