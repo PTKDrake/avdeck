@@ -8,6 +8,8 @@ Emulators run headless (`-qt-hide-window`). Avdeck shows their screen and sends 
 emulator's gRPC API, so the device looks and responds as it does in the stock window, with none of
 its window problems on mixed-DPI, multi-monitor setups.
 
+![The Devices page with a phone and a tablet running in tabs](screenshots/devices.png)
+
 ## Features
 
 - **One window, one tab per emulator.** Switch with the tab strip, Ctrl+Tab or Ctrl+1..9. Only the
@@ -33,6 +35,27 @@ its window problems on mixed-DPI, multi-monitor setups.
   saving, what closing a tab or the app does, and a System / Light / Dark theme.
 - **Command line and single instance**: `avdeck --avd NAME` starts or attaches to a device; when
   Avdeck is already open, the request goes to that window.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="23%"><img src="screenshots/phone.png" alt="A phone in its tab, with the toolbar on the right"></td>
+    <td><img src="screenshots/tablet.png" alt="A tablet in its tab, in landscape"></td>
+  </tr>
+  <tr>
+    <td align="center">A phone in its tab</td>
+    <td align="center">A tablet: the window keeps the device's shape</td>
+  </tr>
+</table>
+
+| Creating a device | Settings |
+|---|---|
+| ![The Create device dialog](screenshots/create.png) | ![The Settings page with the SDK and tool paths](screenshots/settings.png) |
+
+The light theme, on the Devices page:
+
+![The Devices page in the light theme](screenshots/devices-light.png)
 
 ## Requirements
 
