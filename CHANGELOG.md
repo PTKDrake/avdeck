@@ -11,7 +11,7 @@ and CPU.
 
 ### Performance
 
-Measured on a laptop with an AMD Radeon 780M (integrated GPU, so GPU memory is system RAM), at
+Measured on a PC with an AMD Radeon 780M (integrated GPU, so GPU memory is system RAM), at
 150% scale, with the same build settings:
 
 | | 1.0.0 | 1.1.0 |
