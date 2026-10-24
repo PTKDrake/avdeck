@@ -8,7 +8,6 @@
 //!        [-- EMULATOR FLAGS...]
 //! ```
 
-use eframe::egui;
 use std::sync::{Mutex, OnceLock};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, MAX_PATH};
 use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;

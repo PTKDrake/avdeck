@@ -14,7 +14,7 @@ use avdeck_core::display;
 use avdeck_core::running::{self, Running};
 use avdeck_core::sdk::{self, Tools};
 use avdeck_core::{console, launch};
-use eframe::egui::{self, Color32, RichText, pos2, vec2};
+use egui::{self, Color32, RichText, pos2, vec2};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -810,14 +810,10 @@ impl App {
     /// Locks resizing to the active emulator's aspect ratio and sizes the window: the device's
     /// longer side at 80% of the monitor height the first time, the tab's own size when
     /// switching to it, swapped when the device turns; the pages keep a size of their own.
-    fn fit_window(&mut self, ctx: &egui::Context, native: &eframe::Frame, tab_bar: f32) {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        if self.window.is_none()
-            && let Ok(handle) = native.window_handle()
-            && let RawWindowHandle::Win32(handle) = handle.as_raw()
-        {
-            window::install(handle.hwnd.get() as _);
-            self.window = Some(handle.hwnd.get());
+    fn fit_window(&mut self, ctx: &egui::Context, hwnd: isize, tab_bar: f32) {
+        if self.window.is_none() {
+            window::install(hwnd as _);
+            self.window = Some(hwnd);
         }
         let info = ctx.input(|input| input.viewport().clone());
         let (Some(monitor), Some(outer), Some(inner)) =
@@ -1029,8 +1025,9 @@ impl App {
     }
 }
 
-impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, native: &mut eframe::Frame) {
+impl App {
+    /// One frame of the window `hwnd`.
+    pub fn ui(&mut self, ui: &mut egui::Ui, hwnd: isize) {
         let ctx = ui.ctx().clone();
         // Frames that come early (animations, a busy stream) wait their turn; the first frame
         // after a quiet spell, such as the answer to a click, does not.
@@ -1157,7 +1154,7 @@ impl eframe::App for App {
         }
 
         self.dialogs(&ctx);
-        self.fit_window(&ctx, native, tab_bar_height);
+        self.fit_window(&ctx, hwnd, tab_bar_height);
         self.dock_extended_controls(&ctx);
         self.handle_dropped_files();
         self.handle_close_request(&ctx);

@@ -1,7 +1,7 @@
 //! Host keys to the W3C key values the emulator understands (`KeyboardEvent.key`). Keys are sent
 //! unshifted; Shift, Control and Alt go down and up on their own, as on a physical keyboard.
 
-use eframe::egui::Key;
+use egui::Key;
 
 pub fn key_value(key: Key) -> Option<String> {
     let value = match key {

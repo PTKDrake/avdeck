@@ -8,9 +8,15 @@ edition.workspace = true
 anyhow.workspace = true
 avdeck-core.workspace = true
 avdeck-grpc.workspace = true
-eframe.workspace = true
+bytemuck.workspace = true
+egui.workspace = true
+egui-winit.workspace = true
+egui_system_font_provider.workspace = true
+image.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
 tonic.workspace = true
 raw-window-handle.workspace = true
 rfd.workspace = true
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Direct3D_Fxc", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_Threading"] }
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_System_DataExchange", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+winit.workspace = true

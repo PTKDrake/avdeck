@@ -8,7 +8,7 @@ use crate::theme;
 use avdeck_core::config::{Appearance, CloseAction, Config};
 use avdeck_core::launch::GPU_MODES;
 use avdeck_core::sdk::{self, Found, Overrides};
-use eframe::egui::{self, vec2};
+use egui::{self, vec2};
 use std::path::PathBuf;
 
 /// What the page edits, applied with Save.

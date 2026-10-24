@@ -112,7 +112,7 @@ pub struct Target {
 impl Session {
     /// Connects to the emulator that serves (or will serve) gRPC on `target.grpc_port`, waiting
     /// up to three minutes for it to start.
-    pub fn start(runtime: &Handle, target: Target, ctx: eframe::egui::Context) -> Self {
+    pub fn start(runtime: &Handle, target: Target, ctx: egui::Context) -> Self {
         let state = Arc::new(Mutex::new(State::default()));
         let (input, inputs) = unbounded_channel();
         let (visible, visible_rx) = watch::channel(false);
@@ -168,7 +168,7 @@ impl Session {
 
 struct Shared {
     state: Arc<Mutex<State>>,
-    ctx: eframe::egui::Context,
+    ctx: egui::Context,
     tasks: Arc<Mutex<Vec<AbortHandle>>>,
     runtime: Handle,
 }
@@ -430,7 +430,7 @@ async fn forward_input(
     wheel: UnboundedSender<(i32, i32, i32, Rotation)>,
     avd_id: String,
     state: Arc<Mutex<State>>,
-    ctx: eframe::egui::Context,
+    ctx: egui::Context,
 ) {
     while let Some(input) = inputs.recv().await {
         let _ = match input {

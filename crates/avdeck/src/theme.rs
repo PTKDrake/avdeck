@@ -3,7 +3,7 @@
 //! silhouettes).
 
 use crate::icons;
-use eframe::egui::{
+use egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Pos2, Rect,
     Response, RichText, Sense, Shadow, Stroke, TextStyle, Theme, Ui, Vec2, pos2, vec2,
 };

@@ -10,7 +10,11 @@ edition = "2024"
 avdeck-core = { path = "crates/avdeck-core" }
 avdeck-grpc = { path = "crates/avdeck-grpc" }
 anyhow = "1.0.104"
-eframe = "0.37.0"
+bytemuck = "1.25.0"
+egui = { version = "0.37.0", default-features = false, features = ["bytemuck", "default_fonts"] }
+egui-winit = { version = "0.37.0", default-features = false, features = ["accesskit", "clipboard", "links"] }
+egui_system_font_provider = "0.37.0"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
 png = "0.18.1"
 raw-window-handle = "0.6.2"
 rfd = "0.17.2"
@@ -23,4 +27,6 @@ tokio = "1.54.1"
 tonic = "0.14.6"
 tonic-prost = "0.14.6"
 tonic-prost-build = "0.14.6"
+windows = "0.62.2"
 windows-sys = "0.61.2"
+winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }

@@ -7,7 +7,7 @@ use crate::session::Phase;
 use crate::theme;
 use avdeck_core::avd::Avd;
 use avdeck_core::launch;
-use eframe::egui::{self, Color32, RichText, Stroke, vec2};
+use egui::{self, Color32, RichText, Stroke, vec2};
 
 enum Status {
     /// Shown in a tab of this window.

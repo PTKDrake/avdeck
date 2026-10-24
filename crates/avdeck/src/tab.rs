@@ -6,7 +6,7 @@ use crate::session::{Input, Phase, Session, Target};
 use crate::theme;
 use avdeck_core::avd::Avd;
 use avdeck_core::display::{self, Rotation};
-use eframe::egui::{self, Color32, ColorImage, Sense, TextureHandle, TextureOptions, pos2, vec2};
+use egui::{self, Color32, ColorImage, Sense, TextureHandle, TextureOptions, pos2, vec2};
 use std::process::Child;
 use std::time::Instant;
 

@@ -12,7 +12,7 @@ use avdeck_core::tool;
 use avdeck_grpc::Emulator;
 use avdeck_grpc::control::snapshot_filter::LoadStatus;
 use avdeck_grpc::control::{SnapshotFilter, SnapshotPackage};
-use eframe::egui::{self, Color32, RichText};
+use egui::{self, Color32, RichText};
 use std::sync::{Arc, Mutex};
 
 /// Progress text, then the result.

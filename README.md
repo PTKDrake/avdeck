@@ -59,7 +59,8 @@ The light theme, on the Devices page:
 
 ## Requirements
 
-- Windows 10 or 11, x64.
+- Windows 10 or 11, x64, with a Direct3D 11 GPU (Avdeck falls back to software rendering without
+  one).
 - The Android SDK with the Android Emulator (developed against Emulator 37.2.12) and x86_64
   system images.
 - To create devices and download images: the Android SDK Command-line Tools and a JDK.
@@ -145,7 +146,7 @@ sdkmanager) receive the resolved values:
 2. It reads the emulator's discovery file (`%TEMP%\avd\running\pid_<pid>.ini`) to get the gRPC port
    and the access token, and connects with `authorization: Bearer <token>`.
 3. Frames arrive through a shared-memory region that Avdeck creates and the emulator writes
-   into. They are uploaded to the GPU as an egui texture.
+   into. They are uploaded to the GPU as an egui texture and drawn with Direct3D 11.
 4. Touch, keys, text and rotation go back as gRPC calls. The emulator console is used as a
    fallback, for example to stop an emulator that no longer answers gRPC.
 
@@ -157,7 +158,7 @@ Avdeck can only show the ones that run with gRPC.
 | Area | Technology |
 |---|---|
 | Language | Rust 2024 |
-| UI | [egui](https://github.com/emilk/egui) / eframe 0.37 on wgpu |
+| UI | [egui](https://github.com/emilk/egui) 0.37 with egui-winit, drawn by a small Direct3D 11 renderer of Avdeck's own (`windows`) |
 | gRPC | [tonic](https://github.com/hyperium/tonic) 0.14 and prost, on tokio |
 | Windows | `windows-sys` (window subclassing, DPI, shared memory, processes), `rfd` (file dialogs) |
 | Config | serde and TOML |

@@ -1,6 +1,6 @@
 //! Phosphor Light glyphs (`assets/Phosphor-Light.ttf`), drawn in the text color.
 
-use eframe::egui::{FontData, FontDefinitions, FontFamily};
+use egui::{FontData, FontDefinitions, FontFamily};
 use std::sync::Arc;
 
 pub const POWER: &str = "\u{E3DA}";
