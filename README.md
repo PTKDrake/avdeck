@@ -71,8 +71,9 @@ required.
 ## Download
 
 Each release on the repository's **Releases** page has `avdeck-vX.Y.Z-windows-x64.zip` with
-`avdeck.exe`, this README and the font licenses, plus a `.sha256` checksum. Unzip it anywhere and
-run `avdeck.exe`. Nothing needs to be installed.
+`avdeck.exe`, this README, the changelog and the font licenses, plus a `.sha256` checksum. Unzip it
+anywhere and run `avdeck.exe`. Nothing needs to be installed. What changed in each version is in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Build from source
 
@@ -190,7 +191,8 @@ which also keeps the built `avdeck.exe` as an artifact for 14 days).
 
 ### Releasing
 
-1. Set the new version in `Cargo.toml` (`[workspace.package] version`) and commit.
+1. Set the new version in `Cargo.toml` (`[workspace.package] version`), add a `## X.Y.Z - date`
+   section at the top of `CHANGELOG.md`, and commit.
 2. Tag the commit and push the tag:
 
    ```powershell
@@ -199,7 +201,8 @@ which also keeps the built `avdeck.exe` as an artifact for 14 days).
    ```
 
 `release.yml` checks that the tag matches the version, runs the tests, builds the zip and
-publishes the GitHub release with generated notes. A tag with a suffix such as `v0.2.0-beta.1`
+publishes the GitHub release with the version's `CHANGELOG.md` section as its notes (generated
+notes when there is no such section). A tag with a suffix such as `v0.2.0-beta.1`
 makes a prerelease. Running the workflow by hand from the Actions tab builds the zip as an
 artifact without publishing anything.
 

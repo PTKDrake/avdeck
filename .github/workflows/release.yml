@@ -22,6 +22,9 @@ jobs:
       IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Every tag, to link the release notes to the changes since the previous release.
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -49,7 +52,7 @@ jobs:
           $name = "avdeck-$($env:REF_NAME -replace '[^\w.-]', '-')-windows-x64"
           $dir = "dist/$name"
           New-Item -ItemType Directory -Force "$dir/licenses" | Out-Null
-          Copy-Item target/release/avdeck.exe, README.md $dir
+          Copy-Item target/release/avdeck.exe, README.md, CHANGELOG.md $dir
           Copy-Item crates/avdeck/assets/*-LICENSE.txt "$dir/licenses"
           Compress-Archive -Path "$dir/*" -DestinationPath "dist/$name.zip"
           $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
@@ -69,7 +72,27 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $flags = @('--title', "Avdeck $env:REF_NAME", '--generate-notes', '--verify-tag')
+          $flags = @('--title', "Avdeck $env:REF_NAME", '--verify-tag')
+          # The notes are the version's section of CHANGELOG.md, or generated when it has none.
+          $version = [regex]::Escape($env:REF_NAME.TrimStart('v'))
+          $changelog = Get-Content CHANGELOG.md -Raw
+          if ($changelog -match "(?ms)^## $version\b[^\n]*\n(.*?)(?=^## |\z)") {
+            $previous = git describe --tags --abbrev=0 "$env:REF_NAME^" 2>$null
+            $notes = @(
+              $Matches[1].Trim()
+              ''
+              '## Download'
+              ''
+              "Download ``$env:PACKAGE.zip``, unzip it anywhere and run ``avdeck.exe``; nothing needs to be installed. ``$env:PACKAGE.zip.sha256`` holds its SHA-256 checksum (``Get-FileHash $env:PACKAGE.zip``)."
+            )
+            if ($previous) {
+              $notes += '', "**Full changes**: https://github.com/$env:GITHUB_REPOSITORY/compare/$previous...$env:REF_NAME"
+            }
+            $notes -join "`n" | Out-File notes.md -Encoding utf8
+            $flags += '--notes-file', 'notes.md'
+          } else {
+            $flags += '--generate-notes'
+          }
           # v1.2.0-beta.1 and the like are prereleases.
           if ($env:REF_NAME -like '*-*') { $flags += '--prerelease' }
           gh release create $env:REF_NAME "dist/$env:PACKAGE.zip" "dist/$env:PACKAGE.zip.sha256" @flags
