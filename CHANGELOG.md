@@ -3,6 +3,35 @@
 All notable changes to Avdeck. Versions follow [Semantic Versioning](https://semver.org); each
 release's section is also its notes on the GitHub Releases page.
 
+## 1.3.0 - 2026-10-26
+
+An icon of its own, a choice of where screenshots go, and an About section.
+
+### Added
+
+- **Screenshot folder.** Settings has a Screenshots card to choose where the toolbar's screenshot
+  button saves, with a button to open that folder. Left empty, Avdeck uses the emulator's own
+  "Screenshot save location" (Extended controls > Settings), and `Pictures\Avdeck` when the
+  emulator has none. A screenshot that cannot be saved now says why over the screen instead of
+  failing silently.
+- **About.** Settings shows Avdeck's version, copyright, links to the GitHub repository, the
+  release notes and the issue tracker, and the third-party parts with their licenses.
+- **App icon.** A landscape tablet with a phone in front, white on black, drawn for Avdeck with
+  separate versions for the smallest sizes. It is embedded in `avdeck.exe`, so Explorer, the
+  taskbar and shortcuts show it, and replaces egui's logo on the window. The file's properties
+  now carry the product name, version and copyright.
+
+### Changed
+
+- The toolbar beside a device's screen moves the window when dragged by its empty space, like the
+  title bar.
+
+### Upgrading
+
+- With no screenshot folder set, screenshots now follow the emulator's "Screenshot save location"
+  when it has one, instead of always going to `Pictures\Avdeck`. Set a folder in Settings to keep
+  the old place.
+
 ## 1.2.0 - 2026-10-26
 
 A first-run setup, and a window that reopens where and as large as you left it, on a monitor
