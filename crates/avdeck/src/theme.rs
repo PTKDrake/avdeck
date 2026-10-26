@@ -1,6 +1,6 @@
 //! Avdeck's look: Inter for text, Phosphor for icons, a light and a dark palette that follow
 //! Windows, and the building blocks every page uses (buttons, chips, cards, toasts, device
-//! silhouettes).
+//! silhouettes, the app icon).
 
 use crate::icons;
 use egui::{
@@ -693,4 +693,36 @@ pub fn card(ui: &Ui) -> egui::Frame {
         .stroke(Stroke::new(1.0, palette.border))
         .corner_radius(CornerRadius::same(12))
         .inner_margin(Margin::same(14))
+}
+
+/// Avdeck's icon, `side` points square. Scaled on the CPU to its size in pixels: the renderer
+/// makes no mipmaps, so the large image drawn small would alias.
+pub fn app_icon(ui: &mut Ui, side: f32) -> Response {
+    let pixels = (side * ui.ctx().pixels_per_point()).round().max(1.0) as u32;
+    let id = egui::Id::unique(("app-icon", pixels));
+    let cached = ui
+        .ctx()
+        .data(|data| data.get_temp::<egui::TextureHandle>(id));
+    let texture = cached.unwrap_or_else(|| {
+        let image = image::load_from_memory(include_bytes!("../assets/avdeck-256.png"))
+            .map(|image| image.to_rgba8())
+            .unwrap_or_default();
+        let scaled = image::imageops::resize(&image, pixels, pixels, image::imageops::Lanczos3);
+        let texture = ui.ctx().load_texture(
+            "app-icon",
+            egui::ColorImage::from_rgba_unmultiplied([pixels as usize; 2], &scaled),
+            egui::TextureOptions::LINEAR,
+        );
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(id, texture.clone()));
+        texture
+    });
+    let (rect, response) = ui.allocate_exact_size(vec2(side, side), Sense::hover());
+    ui.painter().image(
+        texture.id(),
+        rect,
+        Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+        Color32::WHITE,
+    );
+    response
 }

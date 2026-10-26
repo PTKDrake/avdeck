@@ -1194,12 +1194,13 @@ impl App {
         match self.page.clone() {
             Page::Emulator(id) => {
                 let debug = self.debug;
+                let screenshots = self.config.screenshots.clone();
                 if let Some(tab) = self.tab_mut(&id) {
                     egui::Panel::right("toolbar")
                         .resizable(false)
                         .exact_size(TOOLBAR_WIDTH)
                         .frame(egui::Frame::NONE.fill(chrome))
-                        .show(ui, |ui| tab.toolbar(ui));
+                        .show(ui, |ui| tab.toolbar(ui, screenshots.as_deref()));
                     egui::CentralPanel::default()
                         .frame(egui::Frame::NONE.fill(Color32::BLACK))
                         .show(ui, |ui| {

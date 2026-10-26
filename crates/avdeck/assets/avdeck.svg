@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#26262a"/>
+      <stop offset="1" stop-color="#0c0c0e"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#tile)"/>
+  <rect x="67" y="67" width="890" height="890" rx="197" fill="none" stroke="#fff" stroke-opacity="0.16" stroke-width="6"/>
+  <g transform="translate(17 -23)">
+    <!-- Tablet, landscape -->
+    <rect x="150" y="230" width="580" height="410" rx="56" fill="#fff"/>
+    <rect x="184" y="264" width="512" height="342" rx="24" fill="#141416"/>
+    <circle cx="440" cy="247" r="7" fill="#141416"/>
+    <rect x="400" y="584" width="80" height="10" rx="5" fill="#fff"/>
+    <!-- Phone, portrait, in front, set off from the tablet by a dark gap -->
+    <rect x="576" y="346" width="278" height="508" rx="66" fill="#141416"/>
+    <rect x="590" y="360" width="250" height="480" rx="52" fill="#fff"/>
+    <rect x="614" y="384" width="202" height="432" rx="30" fill="#141416"/>
+    <circle cx="715" cy="412" r="10" fill="#fff"/>
+    <rect x="685" y="792" width="60" height="9" rx="4.5" fill="#fff"/>
+  </g>
+</svg>

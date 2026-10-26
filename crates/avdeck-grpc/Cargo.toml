@@ -3,6 +3,8 @@ name = "avdeck-grpc"
 description = "gRPC client for the Android Emulator (protos vendored from emulator 37.2.12)"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+repository.workspace = true
 
 [dependencies]
 prost.workspace = true

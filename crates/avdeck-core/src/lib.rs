@@ -9,5 +9,6 @@ pub mod images;
 mod ini;
 pub mod launch;
 pub mod running;
+pub mod screenshots;
 pub mod sdk;
 pub mod tool;

@@ -21,7 +21,8 @@ its window problems on mixed-DPI, multi-monitor setups.
   types (including Vietnamese and other IME input), and the clipboard is synced both ways. Drop an
   APK onto the screen to install it; other files are copied to `/sdcard/Download`.
 - **Toolbar**: power, volume, rotate, screenshot, back, home, overview, and the emulator's Extended
-  Controls window (GPS, sensors, battery, ...), docked beside Avdeck.
+  Controls window (GPS, sensors, battery, ...), docked beside Avdeck. Its empty space moves the
+  window like the title bar.
 - **Devices page**: a card for every AVD with its shape, a live thumbnail and its state (running in a
   tab, in the background, outside Avdeck, stopping, not responding). Start, open, stop, cold boot,
   start with options, snapshots, edit, duplicate, wipe, delete, show in Explorer.
@@ -131,7 +132,7 @@ In a device tab, other keys go to the device.
 |---|---|
 | Settings | `%APPDATA%\avdeck\config.toml` |
 | Emulator logs | `%LOCALAPPDATA%\avdeck\logs\<AVD>.log` |
-| Screenshots | `Pictures\Avdeck` |
+| Screenshots | Set in Settings; by default the emulator's own "Screenshot save location" (Extended controls > Settings), else `Pictures\Avdeck` |
 
 ## Configuration
 

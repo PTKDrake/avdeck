@@ -52,6 +52,8 @@ pub struct Config {
     pub close_tab: CloseAction,
     pub close_app: CloseAction,
     pub appearance: Appearance,
+    /// Folder for screenshots; `None` uses the emulator's own setting, else `Pictures\Avdeck`.
+    pub screenshots: Option<PathBuf>,
     /// Replaces `window` (a position in points, wrong across monitors of different DPI), which
     /// older versions wrote and this one ignores.
     pub window_state: Option<WindowState>,
@@ -74,6 +76,7 @@ impl Default for Config {
             close_tab: CloseAction::default(),
             close_app: CloseAction::default(),
             appearance: Appearance::default(),
+            screenshots: None,
             window_state: None,
             tabs: Vec::new(),
             setup_done: false,
@@ -134,6 +137,7 @@ mod tests {
             },
             close_app: CloseAction::KeepRunning,
             appearance: Appearance::Dark,
+            screenshots: Some(r"D:\Shots".into()),
             window_state: Some(WindowState {
                 bounds: [-1700, 600, -900, 1500],
                 page_size: Some([960.0, 640.5]),
@@ -157,6 +161,7 @@ mod tests {
         assert_eq!(config.appearance, Appearance::System);
         assert_eq!(config.tools.jdk, Some(PathBuf::from(r"C:\jdk")));
         assert!(config.tabs.is_empty());
+        assert_eq!(config.screenshots, None);
         assert!(!config.setup_done);
         assert_eq!(config.launch.gpu.as_deref(), Some("host"));
         // Written by an older Avdeck: a launch table without the GPU mode.

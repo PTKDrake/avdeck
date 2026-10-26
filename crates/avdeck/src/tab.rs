@@ -32,11 +32,7 @@ const TOOLBAR: [Option<(&str, &str, Action)>; 13] = [
     None,
     Some((icons::ROTATE_LEFT, "Rotate left", Action::Rotate(1))),
     Some((icons::ROTATE_RIGHT, "Rotate right", Action::Rotate(-1))),
-    Some((
-        icons::SCREENSHOT,
-        "Take screenshot (Pictures\\Avdeck)",
-        Action::Screenshot,
-    )),
+    Some((icons::SCREENSHOT, "Take screenshot", Action::Screenshot)),
     None,
     Some((icons::BACK, "Back", Action::Key("GoBack"))),
     Some((icons::HOME, "Home", Action::Key("GoHome"))),
@@ -221,8 +217,14 @@ impl EmulatorTab {
         }
     }
 
-    pub fn toolbar(&mut self, ui: &mut egui::Ui) {
+    /// The toolbar; screenshots go to the `screenshots` folder set in the settings, if any.
+    pub fn toolbar(&mut self, ui: &mut egui::Ui, screenshots: Option<&std::path::Path>) {
         let palette = theme::palette(ui);
+        // Its background moves the window like the title bar; the buttons, added later, sit on top.
+        let background = ui.interact(ui.max_rect(), ui.scope_id().with("drag"), Sense::drag());
+        if background.drag_started_by(egui::PointerButton::Primary) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
         ui.vertical_centered(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.add_space(8.0);
@@ -235,20 +237,20 @@ impl EmulatorTab {
                     continue;
                 };
                 if theme::icon(ui, icon, tooltip, 34.0).clicked() {
-                    self.act(action);
+                    self.act(action, screenshots);
                 }
                 // Foldables get fold/unfold right after rotation.
                 if matches!(action, Action::Rotate(-1)) && self.avd.foldable {
                     let tooltip = if self.folded { "Unfold" } else { "Fold" };
                     if theme::icon(ui, icons::FOLD, tooltip, 34.0).clicked() {
-                        self.act(Action::Fold);
+                        self.act(Action::Fold, screenshots);
                     }
                 }
             }
         });
     }
 
-    fn act(&mut self, action: Action) {
+    fn act(&mut self, action: Action, screenshots: Option<&std::path::Path>) {
         let input = match action {
             Action::Key(key) => Input::Key(key),
             Action::Rotate(quarters) => Input::Rotate(self.rotation.quarters() + quarters),
@@ -256,7 +258,7 @@ impl EmulatorTab {
                 self.folded = !self.folded;
                 Input::Fold(self.folded)
             }
-            Action::Screenshot => Input::Screenshot,
+            Action::Screenshot => Input::Screenshot(screenshots.map(Into::into)),
             Action::ExtendedControls => {
                 self.extended_search = Some(Instant::now());
                 Input::ExtendedControls

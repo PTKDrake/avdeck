@@ -413,39 +413,19 @@ impl Running {
     }
 }
 
-/// egui's logo as the window and taskbar icon, as eframe set it.
+/// The icon the build script embeds (resource 1) as the window and taskbar icon, at the sizes
+/// Windows shows them.
 fn set_icon(window: isize) {
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateIconFromResourceEx, GetSystemMetrics, ICON_BIG, ICON_SMALL, LR_DEFAULTCOLOR,
-        SM_CXICON, SM_CXSMICON, SendMessageW, WM_SETICON,
+        GetSystemMetrics, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW, SM_CXICON,
+        SM_CXSMICON, SendMessageW, WM_SETICON,
     };
-    let Ok(image) = image::load_from_memory(include_bytes!("../assets/egui-icon.png")) else {
-        return;
-    };
-    let image = image.to_rgba8();
+    let module = unsafe { GetModuleHandleW(std::ptr::null()) };
     for (kind, metric) in [(ICON_BIG, SM_CXICON), (ICON_SMALL, SM_CXSMICON)] {
         let side = unsafe { GetSystemMetrics(metric) };
-        let scaled =
-            image::imageops::resize(&image, side as u32, side as u32, image::imageops::Lanczos3);
-        let mut png = Vec::new();
-        if scaled
-            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-            .is_err()
-        {
-            return;
-        }
-        // 0x00030000: the icon format version.
-        let icon = unsafe {
-            CreateIconFromResourceEx(
-                png.as_mut_ptr(),
-                png.len() as u32,
-                1,
-                0x0003_0000,
-                side,
-                side,
-                LR_DEFAULTCOLOR,
-            )
-        };
+        // SAFETY: a resource id as the name pointer is MAKEINTRESOURCE.
+        let icon = unsafe { LoadImageW(module, 1 as _, IMAGE_ICON, side, side, LR_DEFAULTCOLOR) };
         if !icon.is_null() {
             unsafe { SendMessageW(window as _, WM_SETICON, kind as usize, icon as isize) };
         }

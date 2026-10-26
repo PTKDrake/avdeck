@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result, bail};
 use avdeck_core::display::Rotation;
-use avdeck_core::running;
+use avdeck_core::{running, screenshots};
 use avdeck_grpc::control::image_format::ImgFormat;
 use avdeck_grpc::control::keyboard_event::KeyEventType;
 use avdeck_grpc::control::physical_model_value::PhysicalType;
@@ -15,6 +15,7 @@ use avdeck_grpc::control::{
     ThemingStyle, Touch, TouchEvent,
 };
 use avdeck_grpc::{Auth, Emulator, Frame, SharedFrames};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
@@ -50,8 +51,9 @@ pub enum Input {
     Rotate(i32),
     /// Fold or unfold a foldable.
     Fold(bool),
-    /// Save a PNG to `Pictures\Avdeck`.
-    Screenshot,
+    /// Save a PNG to the folder set in Avdeck's settings (`None`: the emulator's setting, else
+    /// `Pictures\Avdeck`).
+    Screenshot(Option<PathBuf>),
     ExtendedControls,
 }
 
@@ -487,7 +489,7 @@ async fn forward_input(
                 })
                 .await
                 .map(drop),
-            Input::Screenshot => match sender
+            Input::Screenshot(setting) => match sender
                 .controller
                 .get_screenshot(ImageFormat {
                     format: ImgFormat::Png as i32,
@@ -496,10 +498,13 @@ async fn forward_input(
                 .await
             {
                 Ok(image) => {
-                    if let Ok(path) = save_screenshot(&avd_id, &image.into_inner().image) {
-                        state.lock().unwrap().notice = Some(format!("Saved {}", path.display()));
-                        ctx.request_repaint();
-                    }
+                    let notice = match save_screenshot(&avd_id, setting, &image.into_inner().image)
+                    {
+                        Ok(path) => format!("Saved {}", path.display()),
+                        Err(error) => format!("Cannot save the screenshot: {error:#}"),
+                    };
+                    state.lock().unwrap().notice = Some(notice);
+                    ctx.request_repaint();
                     Ok(())
                 }
                 Err(status) => Err(status),
@@ -530,13 +535,13 @@ async fn paste(emulator: &mut Emulator, text: String) -> Result<(), tonic::Statu
     send_key(emulator, "Control".to_owned(), KeyEventType::Keyup).await
 }
 
-fn save_screenshot(avd_id: &str, png: &[u8]) -> Result<std::path::PathBuf> {
-    let directory = std::path::PathBuf::from(
-        std::env::var_os("USERPROFILE").context("USERPROFILE is not set")?,
-    )
-    .join("Pictures")
-    .join("Avdeck");
-    std::fs::create_dir_all(&directory)?;
+/// Saves `png` in the folder from Avdeck's `setting` or the fallbacks after it.
+fn save_screenshot(avd_id: &str, setting: Option<PathBuf>, png: &[u8]) -> Result<PathBuf> {
+    let directory = screenshots::folder(setting.as_deref())
+        .context("USERPROFILE is not set")?
+        .path;
+    std::fs::create_dir_all(&directory)
+        .with_context(|| format!("cannot create {}", directory.display()))?;
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs();

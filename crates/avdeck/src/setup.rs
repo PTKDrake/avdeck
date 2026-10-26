@@ -260,18 +260,10 @@ fn steps(ui: &mut egui::Ui, step: Step) {
 
 fn welcome(ui: &mut egui::Ui) {
     let palette = theme::palette(ui);
-    ui.add_space(18.0);
-    let (tile, _) = ui.allocate_exact_size(vec2(64.0, 64.0), egui::Sense::hover());
-    ui.painter()
-        .rect_filled(tile, egui::CornerRadius::same(16), palette.accent);
-    ui.painter().text(
-        tile.center(),
-        egui::Align2::CENTER_CENTER,
-        icons::DEVICES,
-        egui::FontId::proportional(36.0),
-        palette.on_accent,
-    );
-    ui.add_space(18.0);
+    // The icon's tile leaves a margin: 72 points look as large as a 64-point tile.
+    ui.add_space(14.0);
+    theme::app_icon(ui, 72.0);
+    ui.add_space(14.0);
     ui.label(theme::title("Welcome to Avdeck", 28.0));
     ui.add_space(6.0);
     ui.label(

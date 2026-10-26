@@ -1,5 +1,5 @@
 //! The Settings page: SDK and tool paths (when the environment has none, or to use others),
-//! how emulators start, and what closing does. The header with Save and Revert stays put while
+//! how emulators start, what closing does, where screenshots go, and about Avdeck. The header with Save and Revert stays put while
 //! the page scrolls; wide windows get two columns.
 
 use crate::app::App;
@@ -7,6 +7,7 @@ use crate::icons;
 use crate::theme;
 use avdeck_core::config::{Appearance, CloseAction, Config};
 use avdeck_core::launch::GPU_MODES;
+use avdeck_core::screenshots;
 use avdeck_core::sdk::{self, Found, Overrides};
 use egui::{self, vec2};
 use std::path::PathBuf;
@@ -23,6 +24,10 @@ pub struct SettingsForm {
     close_tab: CloseAction,
     close_app: CloseAction,
     appearance: Appearance,
+    /// Screenshot folder set here; empty means the emulator's setting, else `Pictures\Avdeck`.
+    screenshots: String,
+    /// Where screenshots go without a folder set here, shown as the placeholder.
+    screenshots_found: Option<Found>,
 }
 
 /// Rows: label, what it is, what the browse button picks.
@@ -107,6 +112,12 @@ impl SettingsForm {
             close_tab: config.close_tab,
             close_app: config.close_app,
             appearance: config.appearance,
+            screenshots: config
+                .screenshots
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+            screenshots_found: screenshots::folder(None),
         }
     }
 
@@ -119,6 +130,7 @@ impl SettingsForm {
         config.close_tab = self.close_tab;
         config.close_app = self.close_app;
         config.appearance = self.appearance;
+        config.screenshots = path(&self.screenshots);
     }
 
     pub fn appearance(&self) -> Appearance {
@@ -183,12 +195,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         ui.vertical(|ui| {
                             ui.set_width(width - SIDE_COLUMN - GAP);
                             tools(app, ui);
+                            about(ui);
                         });
                         ui.vertical(|ui| {
                             ui.set_width(SIDE_COLUMN);
                             appearance(app, ui);
                             starting(app, ui);
                             closing(app, ui);
+                            screenshots(app, ui);
                         });
                     });
                 } else if width >= 600.0 {
@@ -205,13 +219,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         ui.vertical(|ui| {
                             ui.set_width(half);
                             closing(app, ui);
+                            screenshots(app, ui);
                         });
                     });
+                    about(ui);
                 } else {
                     tools(app, ui);
                     appearance(app, ui);
                     starting(app, ui);
                     closing(app, ui);
+                    screenshots(app, ui);
+                    about(ui);
                 }
             });
             ui.add_space(22.0);
@@ -339,50 +357,17 @@ fn path_field(app: &mut App, ui: &mut egui::Ui, index: usize, width: f32) {
     let palette = theme::palette(ui);
     let (_, what, pick) = ROWS[index];
     let found = app.settings.found[index].clone();
-    let set = !app.settings.paths[index].trim().is_empty();
     ui.horizontal(|ui| {
         let placeholder = found
             .as_ref()
             .map_or(what.to_owned(), |found| found.path.display().to_string());
-        let input = ui.add(
-            egui::TextEdit::singleline(&mut app.settings.paths[index])
-                .hint_text(placeholder)
-                .desired_width(width)
-                .margin(egui::Margin {
-                    left: 10,
-                    right: if set { 32 } else { 10 },
-                    top: 7,
-                    bottom: 7,
-                }),
+        path_input(
+            ui,
+            &mut app.settings.paths[index],
+            &placeholder,
+            width,
+            "Clear: use what is found automatically",
         );
-        // × inside the field, at its end.
-        if set {
-            let clear = egui::Rect::from_center_size(
-                egui::pos2(input.rect.right() - 16.0, input.rect.center().y),
-                vec2(22.0, 22.0),
-            );
-            let response = ui
-                .interact(clear, input.id.with("clear"), egui::Sense::click())
-                .on_hover_text("Clear: use what is found automatically");
-            if response.hovered() {
-                ui.painter()
-                    .rect_filled(clear, egui::CornerRadius::same(6), palette.surface_hover);
-            }
-            ui.painter().text(
-                clear.center(),
-                egui::Align2::CENTER_CENTER,
-                icons::CLOSE,
-                egui::FontId::proportional(13.0),
-                if response.hovered() {
-                    palette.text
-                } else {
-                    palette.muted
-                },
-            );
-            if response.clicked() {
-                app.settings.paths[index].clear();
-            }
-        }
         if theme::icon(ui, icons::FOLDER, "Browse", 32.0).clicked() {
             let dialog = rfd::FileDialog::new();
             let picked = match pick {
@@ -417,6 +402,51 @@ fn path_field(app: &mut App, ui: &mut egui::Ui, index: usize, width: f32) {
         text.push_str(&format!("  ·  version {version}"));
     }
     ui.label(egui::RichText::new(text).size(12.0).color(color));
+}
+
+/// A path input with `placeholder` when empty and a × at its end that clears it.
+fn path_input(ui: &mut egui::Ui, text: &mut String, placeholder: &str, width: f32, clear: &str) {
+    let palette = theme::palette(ui);
+    let set = !text.trim().is_empty();
+    let input = ui.add(
+        egui::TextEdit::singleline(text)
+            .hint_text(placeholder)
+            .desired_width(width)
+            .margin(egui::Margin {
+                left: 10,
+                right: if set { 32 } else { 10 },
+                top: 7,
+                bottom: 7,
+            }),
+    );
+    if !set {
+        return;
+    }
+    let rect = egui::Rect::from_center_size(
+        egui::pos2(input.rect.right() - 16.0, input.rect.center().y),
+        vec2(22.0, 22.0),
+    );
+    let response = ui
+        .interact(rect, input.id.with("clear"), egui::Sense::click())
+        .on_hover_text(clear);
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(6), palette.surface_hover);
+    }
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        icons::CLOSE,
+        egui::FontId::proportional(13.0),
+        if response.hovered() {
+            palette.text
+        } else {
+            palette.muted
+        },
+    );
+    if response.clicked() {
+        text.clear();
+    }
 }
 
 /// System, Light, Dark as one segmented control; applied on Save.
@@ -554,5 +584,152 @@ pub(crate) fn closing(app: &mut App, ui: &mut egui::Ui) {
                 });
             ui.add_space(6.0);
         }
+    });
+}
+
+/// The screenshot folder: set here, or the emulator's own setting, or `Pictures\Avdeck`.
+pub(crate) fn screenshots(app: &mut App, ui: &mut egui::Ui) {
+    card(
+        ui,
+        "Screenshots",
+        "Where the toolbar's screenshot button saves. Empty follows the emulator's \
+         \"Screenshot save location\" (Extended controls › Settings).",
+        |ui| {
+            let palette = theme::palette(ui);
+            let spacing = ui.spacing().item_spacing.x;
+            let width = ui.available_width() - 32.0 - spacing - 6.0;
+            let found = app.settings.screenshots_found.clone();
+            ui.horizontal(|ui| {
+                let placeholder = found
+                    .as_ref()
+                    .map_or(String::new(), |found| found.path.display().to_string());
+                path_input(
+                    ui,
+                    &mut app.settings.screenshots,
+                    &placeholder,
+                    width,
+                    "Clear: follow the emulator's setting",
+                );
+                if theme::icon(ui, icons::FOLDER, "Browse", 32.0).clicked()
+                    && let Some(picked) = rfd::FileDialog::new().pick_folder()
+                {
+                    app.settings.screenshots = picked.display().to_string();
+                }
+            });
+            let typed = path(&app.settings.screenshots);
+            let (text, color) = match (&typed, &found) {
+                (Some(typed), _) if !typed.is_absolute() => (
+                    format!(
+                        "{}  Use a full path, such as D:\\Screenshots",
+                        icons::MISSING
+                    ),
+                    palette.danger,
+                ),
+                (Some(_), _) => (format!("{}  Set here", icons::CHECK), palette.accent),
+                (None, Some(found)) => {
+                    (format!("{}  {}", icons::CHECK, found.via), palette.success)
+                }
+                (None, None) => (
+                    format!("{}  USERPROFILE is not set", icons::MISSING),
+                    palette.danger,
+                ),
+            };
+            ui.label(egui::RichText::new(text).size(12.0).color(color));
+            // Created by the first screenshot.
+            let effective = typed
+                .filter(|typed| typed.is_absolute())
+                .or(found.map(|found| found.path));
+            if let Some(folder) = effective.filter(|folder| folder.is_dir()) {
+                ui.add_space(6.0);
+                if theme::secondary(ui, format!("{}  Open folder", icons::FOLDER)).clicked() {
+                    let _ = std::process::Command::new("explorer.exe")
+                        .arg(&folder)
+                        .spawn();
+                }
+            }
+        },
+    );
+}
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
+const REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
+/// `Name <email>`.
+const AUTHOR: &str = env!("CARGO_PKG_AUTHORS");
+
+/// Name, version, copyright, links and the third-party parts with their licenses.
+fn about(ui: &mut egui::Ui) {
+    card(ui, "About", "", |ui| {
+        let palette = theme::palette(ui);
+        let (name, email) = AUTHOR
+            .split_once(" <")
+            .map_or((AUTHOR, ""), |(name, email)| {
+                (name, email.trim_end_matches('>'))
+            });
+        ui.horizontal(|ui| {
+            theme::app_icon(ui, 60.0);
+            ui.add_space(4.0);
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label(theme::title("Avdeck", 18.0));
+                    ui.label(theme::muted(ui, format!("version {VERSION}")));
+                });
+                ui.label(theme::muted(ui, format!("{DESCRIPTION}.")));
+                ui.label(theme::muted(ui, format!("© 2026 {name}")));
+            });
+        });
+        ui.add_space(10.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.hyperlink_to("GitHub", REPOSITORY);
+            ui.label(theme::muted(ui, "·"));
+            ui.hyperlink_to(
+                "Release notes",
+                format!("{REPOSITORY}/releases/tag/v{VERSION}"),
+            );
+            ui.label(theme::muted(ui, "·"));
+            ui.hyperlink_to("Report an issue", format!("{REPOSITORY}/issues"));
+            if !email.is_empty() {
+                ui.label(theme::muted(ui, "·"));
+                ui.hyperlink_to(email, format!("mailto:{email}"));
+            }
+        });
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new("Includes")
+                .family(theme::semibold())
+                .size(13.0),
+        );
+        // Rows as tall as their text, not as a button (a wrapped row starts at this height).
+        ui.spacing_mut().interact_size.y = 0.0;
+        ui.spacing_mut().item_spacing.y = 4.0;
+        for (part, url, license) in [
+            (
+                "Inter 4.1 by Rasmus Andersson",
+                "https://rsms.me/inter/",
+                "SIL Open Font License 1.1",
+            ),
+            ("Phosphor Icons", "https://phosphoricons.com", "MIT License"),
+            (
+                "Android Emulator gRPC protos, Android Open Source Project",
+                "https://source.android.com",
+                "Apache License 2.0",
+            ),
+        ] {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                ui.add(egui::Hyperlink::from_label_and_url(
+                    egui::RichText::new(part).size(12.5),
+                    url,
+                ));
+                ui.label(egui::RichText::new(license).size(12.5).color(palette.faint));
+            });
+        }
+        ui.label(
+            egui::RichText::new("Built with Rust, egui, winit and tonic.")
+                .size(12.5)
+                .color(palette.faint),
+        );
     });
 }
