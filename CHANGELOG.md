@@ -3,6 +3,46 @@
 All notable changes to Avdeck. Versions follow [Semantic Versioning](https://semver.org); each
 release's section is also its notes on the GitHub Releases page.
 
+## 1.2.0 - 2026-10-26
+
+A first-run setup, and a window that reopens where and as large as you left it, on a monitor
+that still exists.
+
+### Added
+
+- **First-run setup.** A welcome, then a check of the environment, then the main preferences.
+  The check lists the Android SDK, the emulator, hardware acceleration, adb, the command-line
+  tools, the AVD folder and the JDK, each with its path, version and where it was found
+  (`%ANDROID_HOME%`, `PATH`, set in Avdeck). It runs the tools for real: `adb version`,
+  `java -version` and `emulator -accel-check` (WHPX or AEHD). Anything missing says what it is
+  needed for and how to get it; a folder button points Avdeck at another copy, checked again at
+  once. The SDK and the emulator are required; any emulator version works. The preferences step
+  covers the theme (applied as you pick it), the GPU mode, snapshot saving and what closing does.
+  It shows once; **Settings > Run setup** shows it again.
+
+### Changed
+
+- The window reopens at its **size** as well as its position: the Devices and Settings pages keep
+  their size, and a device tab opens as large as the last device shown (80% of the monitor height
+  the very first time).
+- The window appears only once it is in place and at its size, instead of showing first and then
+  jumping.
+
+### Fixed
+
+- With monitors at different scales (150% and 100%), the window could reopen off every monitor:
+  its position was saved in units of the scale of the monitor it was on and restored at the
+  scale of the primary one. It is now saved in screen pixels. If that place is on no monitor any
+  more (unplugged or rearranged), the window opens centered on the primary monitor, and in any
+  case it is moved fully inside the monitor's work area once it is sized.
+- Dragging the window onto a monitor of another scale moved it away from the cursor, so the
+  cursor no longer held the point it grabbed. The window now stays under the cursor.
+
+### Upgrading
+
+- The position saved by 1.1.0 is not reused: the first start of 1.2.0 opens centered on the
+  primary monitor, and shows the setup once. All other settings are kept.
+
 ## 1.1.0 - 2026-10-24
 
 Avdeck now draws its window with a small Direct3D 11 renderer of its own instead of eframe on
