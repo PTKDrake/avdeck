@@ -3,6 +3,14 @@
 All notable changes to Avdeck. Versions follow [Semantic Versioning](https://semver.org); each
 release's section is also its notes on the GitHub Releases page.
 
+## 1.3.1 - 2026-10-26
+
+### Fixed
+
+- The close button of a tab other than the selected one can be clicked again. With the pointer on
+  it, it disappeared and reappeared every frame, so clicks were lost and the tab's hover
+  highlight flickered.
+
 ## 1.3.0 - 2026-10-26
 
 An icon of its own, a choice of where screenshots go, and an About section.
