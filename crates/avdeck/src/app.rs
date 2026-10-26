@@ -1266,12 +1266,13 @@ fn tab_widget(
 ) -> (bool, bool, egui::Response) {
     let palette = theme::palette(ui);
     let font = egui::FontId::proportional(13.5);
-    // Hover eases in, keyed by the id the tab is about to get.
+    // Hover eases in, keyed by the id the tab is about to get. The pointer is tested against the
+    // tab's rect, not `hovered()`: over the close button the tab is covered and not hovered.
     let hot = ui.ctx().animate_bool_with_time(
         ui.next_auto_id().with("hover"),
         ui.ctx()
             .read_response(ui.next_auto_id())
-            .is_some_and(|response| response.hovered()),
+            .is_some_and(|response| ui.rect_contains_pointer(response.rect)),
         0.12,
     );
     let text_color = if selected {
@@ -1299,7 +1300,9 @@ fn tab_widget(
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     // Named for screen readers and UI Automation, which see only what widgets describe.
     response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, selected, label));
-    let hovered = response.hovered();
+    // Not `response.hovered()`, which turns false while the pointer is on the close button and
+    // would hide it every other frame.
+    let hovered = ui.rect_contains_pointer(rect);
     let painter = ui.painter();
     if selected {
         painter.rect_filled(rect, egui::CornerRadius::same(8), palette.surface);
