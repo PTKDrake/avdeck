@@ -2,17 +2,13 @@
 //! window of Avdeck: it stays above Avdeck, leaves the taskbar, minimizes with it, opens docked
 //! beside it inside the work area and follows it when it moves or resizes.
 
+use crate::window::{move_visible_to, visible_bounds, work_area};
 use avdeck_core::display::{Bounds, dock_beside, follow};
 use std::sync::Mutex;
-use windows_sys::Win32::Foundation::{HWND, LPARAM, RECT};
-use windows_sys::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
-use windows_sys::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
-};
+use windows_sys::Win32::Foundation::{HWND, LPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GWLP_HWNDPARENT, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
-    IsWindow, IsWindowVisible, PostMessageW, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
-    SetWindowLongPtrW, SetWindowPos, WM_CLOSE,
+    EnumWindows, GWLP_HWNDPARENT, GetWindowTextW, GetWindowThreadProcessId, IsWindow,
+    IsWindowVisible, PostMessageW, SetWindowLongPtrW, WM_CLOSE,
 };
 use windows_sys::core::BOOL;
 
@@ -126,49 +122,4 @@ pub fn detach() {
             }
         }
     }
-}
-
-/// What the user sees of a window (DWM frame bounds, without the invisible resize borders).
-fn visible_bounds(window: HWND) -> Option<Bounds> {
-    let mut rect = RECT::default();
-    let ok = unsafe {
-        DwmGetWindowAttribute(
-            window,
-            DWMWA_EXTENDED_FRAME_BOUNDS as u32,
-            &mut rect as *mut RECT as *mut _,
-            size_of::<RECT>() as u32,
-        )
-    } == 0;
-    ok.then_some((rect.left, rect.top, rect.right, rect.bottom))
-}
-
-fn work_area(window: HWND) -> Option<Bounds> {
-    let monitor = unsafe { MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) };
-    let mut info = MONITORINFO {
-        cbSize: size_of::<MONITORINFO>() as u32,
-        ..Default::default()
-    };
-    let work = (unsafe { GetMonitorInfoW(monitor, &mut info) } != 0).then_some(info.rcWork)?;
-    Some((work.left, work.top, work.right, work.bottom))
-}
-
-/// Moves `window` so its visible top-left corner lands on `target`.
-fn move_visible_to(window: HWND, visible: Bounds, target: (i32, i32)) {
-    let mut outer = RECT::default();
-    if unsafe { GetWindowRect(window, &mut outer) } == 0 {
-        return;
-    }
-    let x = target.0 - (visible.0 - outer.left);
-    let y = target.1 - (visible.1 - outer.top);
-    unsafe {
-        SetWindowPos(
-            window,
-            std::ptr::null_mut(),
-            x,
-            y,
-            0,
-            0,
-            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-        )
-    };
 }

@@ -18,6 +18,9 @@ use winit::window::{Window, WindowId};
 const HIDDEN_REPAINT_INTERVAL: Duration = Duration::from_millis(100);
 /// A redraw asked of Windows that has not come by then runs anyway.
 const MISSED_REDRAW_TIMEOUT: Duration = Duration::from_millis(250);
+/// The window shows once the app has placed and sized it, or after this long (a device tab
+/// waiting for its first frame to know its shape).
+const SHOW_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub enum UserEvent {
     /// egui asked for a repaint at `when`, during pass `pass`.
@@ -76,7 +79,7 @@ struct Running {
     /// A redraw was asked of Windows; past this, run without it.
     redraw_due: Option<Instant>,
     beginning: Instant,
-    /// The window starts hidden and shows with its first frame (no white flash).
+    /// The window starts hidden and shows once placed (no white flash, no jump).
     shown: bool,
     /// The app let a close request through.
     close: bool,
@@ -388,10 +391,6 @@ impl Running {
             };
             self.state.egui_input_mut().events.push(event);
         }
-        if !self.shown {
-            self.shown = true;
-            self.window.set_visible(true);
-        }
         egui_winit::process_viewport_commands(
             &self.ctx,
             &mut self.info,
@@ -399,6 +398,14 @@ impl Running {
             &self.window,
             &mut self.actions,
         );
+        if !self.shown {
+            if self.app.placed() || self.beginning.elapsed() > SHOW_TIMEOUT {
+                self.shown = true;
+                self.window.set_visible(true);
+            } else {
+                self.repaint(Instant::now());
+            }
+        }
         if self.hidden() {
             std::thread::sleep(Duration::from_millis(10));
         }

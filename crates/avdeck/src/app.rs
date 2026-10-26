@@ -9,7 +9,7 @@ use crate::tab::{EmulatorTab, TOOLBAR_WIDTH};
 use crate::theme;
 use crate::window;
 use avdeck_core::avd::{self, Avd};
-use avdeck_core::config::{CloseAction, Config, WindowPosition};
+use avdeck_core::config::{CloseAction, Config, WindowState};
 use avdeck_core::display;
 use avdeck_core::running::{self, Running};
 use avdeck_core::sdk::{self, Tools};
@@ -68,7 +68,13 @@ struct Fit {
     pending: Option<(egui::Vec2, Instant)>,
     /// Inner size of the Devices and Settings pages.
     page_size: Option<egui::Vec2>,
+    /// Longer side of the last device screen shown: a new tab starts at it.
+    screen_side: Option<f32>,
+    /// Outer bounds of the window when last neither minimized nor maximized.
+    normal: Option<display::Bounds>,
     placed: bool,
+    /// What to do once the window has its first size.
+    settle: Option<window::Settle>,
 }
 
 pub struct App {
@@ -107,6 +113,7 @@ pub struct App {
 impl App {
     pub fn new(ctx: &egui::Context, request: crate::instance::Request) -> Self {
         let config = Config::load();
+        let saved = config.window_state;
         let tools = sdk::resolve(&config.tools, &sdk::System);
         let settings = SettingsForm::new(&config);
         theme::set_appearance(ctx, config.appearance);
@@ -125,7 +132,13 @@ impl App {
             scanned_avds: None,
             tabs: Vec::new(),
             window: None,
-            fit: Fit::default(),
+            fit: Fit {
+                page_size: saved
+                    .and_then(|state| state.page_size)
+                    .map(egui::Vec2::from),
+                screen_side: saved.and_then(|state| state.screen_side),
+                ..Default::default()
+            },
             dialog: None,
             settings,
             search: String::new(),
@@ -389,13 +402,14 @@ impl App {
         }
     }
 
-    /// Before the window closes: remember the tabs and where the window was.
-    fn save_state(&mut self, ctx: &egui::Context) {
+    /// Before the window closes: remember the tabs, where the window was and its sizes.
+    fn save_state(&mut self) {
         self.config.tabs = self.tabs.iter().map(|tab| tab.avd.id.clone()).collect();
-        if let Some(outer) = ctx.input(|input| input.viewport().outer_rect) {
-            self.config.window = Some(WindowPosition {
-                x: outer.min.x,
-                y: outer.min.y,
+        if let Some(bounds) = self.fit.normal {
+            self.config.window_state = Some(WindowState {
+                bounds: bounds.into(),
+                page_size: self.fit.page_size.map(Into::into),
+                screen_side: self.fit.screen_side,
             });
         }
         let _ = self.config.save();
@@ -431,9 +445,9 @@ impl App {
             .iter()
             .any(|tab| !matches!(tab.phase(), Phase::Ended(_)));
         match (running, self.config.close_app) {
-            (false, _) | (true, CloseAction::KeepRunning) => self.save_state(ctx),
+            (false, _) | (true, CloseAction::KeepRunning) => self.save_state(),
             (true, CloseAction::Stop) => {
-                self.save_state(ctx);
+                self.save_state();
                 self.stop_all();
             }
             (true, CloseAction::Ask) => {
@@ -477,7 +491,7 @@ impl App {
                 CloseAction::KeepRunning
             };
         }
-        self.save_state(ctx);
+        self.save_state();
         if stop {
             self.stop_all();
         }
@@ -807,15 +821,36 @@ impl App {
         }
     }
 
-    /// Locks resizing to the active emulator's aspect ratio and sizes the window: the device's
-    /// longer side at 80% of the monitor height the first time, the tab's own size when
-    /// switching to it, swapped when the device turns; the pages keep a size of their own.
+    /// Whether the window has its first size and place, to show it.
+    pub fn placed(&self) -> bool {
+        self.fit.placed && self.fit.settle.is_none()
+    }
+
+    /// Places the window and locks resizing to the active emulator's aspect ratio and sizes the
+    /// window: the device's longer side as long as the last device's (80% of the monitor height
+    /// the very first time), the tab's own size when switching to it, swapped when the device
+    /// turns; the pages keep a size of their own.
     fn fit_window(&mut self, ctx: &egui::Context, hwnd: isize, tab_bar: f32) {
         if self.window.is_none() {
             window::install(hwnd as _);
             self.window = Some(hwnd);
         }
+        if !self.fit.placed {
+            self.fit.placed = true;
+            let saved = self.config.window_state.map(|state| state.bounds.into());
+            self.fit.settle = window::place(hwnd as _, saved);
+            // On a monitor of another DPI the scale changes: size the window next frame.
+            ctx.request_repaint();
+            return;
+        }
         let info = ctx.input(|input| input.viewport().clone());
+        if info.minimized != Some(true)
+            && info.maximized != Some(true)
+            && info.fullscreen != Some(true)
+            && let Some(bounds) = window::outer_bounds(hwnd as _)
+        {
+            self.fit.normal = Some(bounds);
+        }
         let (Some(monitor), Some(outer), Some(inner)) =
             (info.monitor_size, info.outer_rect, info.inner_rect)
         else {
@@ -886,14 +921,20 @@ impl App {
         }
 
         if self.fit.layout.as_ref() == Some(&layout) {
-            // Learn the size the user gave the window.
             if self.fit.pending.is_none() {
+                // Sized: now the window can go where it belongs.
+                if let Some(settle) = self.fit.settle.take() {
+                    window::settle(hwnd as _, settle);
+                }
+                // Learn the size the user gave the window.
                 match &self.page {
                     Page::Emulator(id) => {
                         let id = id.clone();
+                        let screen = inner.size() - extras;
                         if let Some(tab) = self.tab_mut(&id) {
-                            tab.screen_size = Some(inner.size() - extras);
+                            tab.screen_size = Some(screen);
                         }
+                        self.fit.screen_side = Some(screen.max_elem());
                     }
                     _ => self.fit.page_size = Some(inner.size()),
                 }
@@ -910,6 +951,11 @@ impl App {
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(minimum));
         let mut keep_center = false;
+        // Not past the monitor: a saved side may come from a larger one.
+        let first_side = self
+            .fit
+            .screen_side
+            .map_or(monitor.y * 0.8, |side| side.min(monitor.y * 0.9));
         let size = match &layout {
             Layout::Page { .. } => self.fit.page_size.unwrap_or(vec2(960.0, 640.0)),
             Layout::Emulator { id, sideways, .. } => {
@@ -917,7 +963,7 @@ impl App {
                 let tab = self.tab_mut(&id).expect("tab");
                 let screen = match (&previous, tab.screen_size) {
                     (_, None) => {
-                        let (width, height) = display::initial_screen_size(monitor.y, 0.8, shape);
+                        let (width, height) = display::initial_screen_size(first_side, 1.0, shape);
                         vec2(width, height)
                     }
                     // Turned: same size on screen, the other way round.
@@ -936,24 +982,14 @@ impl App {
                     (_, Some(size)) => vec2(size.y * aspect, size.y),
                 };
                 tab.screen_size = Some(screen);
+                self.fit.screen_side = Some(screen.max_elem());
                 screen + extras
             }
         };
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
         self.fit.pending = Some((size, Instant::now()));
         let new_outer = size + chrome;
-        if !self.fit.placed {
-            self.fit.placed = true;
-            let position = match self.config.window {
-                Some(saved) => pos2(saved.x, saved.y),
-                // Centered on the monitor the window opened on (the primary one, at the origin).
-                None => pos2(
-                    (monitor.x - new_outer.x) / 2.0,
-                    (monitor.y - new_outer.y) / 2.0,
-                ),
-            };
-            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(position));
-        } else if keep_center {
+        if keep_center {
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
                 outer.center() - new_outer / 2.0,
             ));

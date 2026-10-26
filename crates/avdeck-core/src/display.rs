@@ -241,6 +241,58 @@ pub fn follow(before: Bounds, after: Bounds, side: Bounds) -> (i32, i32) {
     (dx, after.1 - before.1)
 }
 
+/// Index of the monitor (full bounds) that `window` overlaps most; `None` when it overlaps none,
+/// as when the monitor it was saved on is gone or moved.
+pub fn most_overlapped(window: Bounds, monitors: &[Bounds]) -> Option<usize> {
+    let overlap = |monitor: &Bounds| {
+        let width = (window.2.min(monitor.2) - window.0.max(monitor.0)).max(0) as i64;
+        let height = (window.3.min(monitor.3) - window.1.max(monitor.1)).max(0) as i64;
+        width * height
+    };
+    monitors
+        .iter()
+        .map(overlap)
+        .enumerate()
+        .filter(|(_, area)| *area > 0)
+        .max_by_key(|(_, area)| *area)
+        .map(|(index, _)| index)
+}
+
+/// Top-left corner that centers a window of `size` in `work`.
+pub fn centered(size: (i32, i32), work: Bounds) -> (i32, i32) {
+    (
+        work.0 + (work.2 - work.0 - size.0) / 2,
+        work.1 + (work.3 - work.1 - size.1) / 2,
+    )
+}
+
+/// How far to move `window` (visible bounds) to bring it inside `work`: nowhere when it is
+/// inside. One larger than the work area gets its top-left corner in it, so its title bar
+/// stays reachable.
+pub fn keep_inside(window: Bounds, work: Bounds) -> (i32, i32) {
+    let axis =
+        |start: i32, end: i32, low: i32, high: i32| (start - (end - high).max(0)).max(low) - start;
+    (
+        axis(window.0, window.2, work.0, work.2),
+        axis(window.1, window.3, work.1, work.3),
+    )
+}
+
+/// Top-left corner of a window of `size` dragged onto a monitor of another DPI. Windows
+/// `suggested` a rectangle (for its own guess of the new size) with the cursor at the same
+/// relative place; the window keeps that place whatever its real size, so the cursor stays on
+/// the point it grabbed.
+pub fn keep_grab(suggested: Bounds, cursor: (i32, i32), size: (i32, i32)) -> (i32, i32) {
+    let axis = |start: i32, end: i32, cursor: i32, length: i32| {
+        let ratio = (cursor - start) as f64 / (end - start).max(1) as f64;
+        cursor - (ratio * length as f64).round() as i32
+    };
+    (
+        axis(suggested.0, suggested.2, cursor.0, size.0),
+        axis(suggested.1, suggested.3, cursor.1, size.1),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -469,5 +521,56 @@ mod tests {
         // Moving the whole owner moves both.
         let moved = (130, 200, 761, 1480);
         assert_eq!(follow(before, moved, right_side), (30, 40));
+    }
+
+    // Measured 2026-10-26: the 2560x1600 primary at 150% (taskbar on top) and the 1920x1080
+    // monitor at 100% to its left, lower by 516 px.
+    const PRIMARY: Bounds = (0, 0, 2560, 1600);
+    const LEFT: Bounds = (-1920, 516, 0, 1596);
+    const LEFT_WORK: Bounds = (-1920, 564, 0, 1596);
+
+    #[test]
+    fn finds_the_monitor_a_saved_window_overlaps_most() {
+        let monitors = [PRIMARY, LEFT];
+        assert_eq!(most_overlapped((300, 200, 1200, 900), &monitors), Some(0));
+        assert_eq!(
+            most_overlapped((-1500, 600, -600, 1200), &monitors),
+            Some(1)
+        );
+        // Across the edge: mostly on the left monitor.
+        assert_eq!(most_overlapped((-700, 600, 200, 1200), &monitors), Some(1));
+        // Saved when the second monitor was on the right (x 2560-4480): it is gone from there.
+        assert_eq!(most_overlapped((3000, 100, 3900, 700), &monitors), None);
+        // Above the left monitor, beside the primary: nowhere.
+        assert_eq!(most_overlapped((-1500, 0, -600, 500), &monitors), None);
+    }
+
+    #[test]
+    fn centers_in_the_work_area() {
+        assert_eq!(centered((900, 600), WORK), (830, 524));
+    }
+
+    #[test]
+    fn moves_a_window_inside_the_work_area() {
+        // Inside: stays.
+        assert_eq!(keep_inside((100, 100, 900, 700), WORK), (0, 0));
+        // Past the bottom of the left monitor and its left edge.
+        assert_eq!(
+            keep_inside((-1950, 1000, -1250, 1700), LEFT_WORK),
+            (30, -104)
+        );
+        // Under the taskbar.
+        assert_eq!(keep_inside((100, 10, 900, 700), WORK), (0, 38));
+        // Taller than the work area: the top edge goes to the top of the work area.
+        assert_eq!(keep_inside((-1000, 400, -300, 1700), LEFT_WORK), (0, 164));
+    }
+
+    #[test]
+    fn keeps_the_grabbed_point_under_the_cursor() {
+        // Same size as suggested: exactly the suggested corner.
+        let suggested = (-700, 100, -100, 1000);
+        assert_eq!(keep_grab(suggested, (-400, 120), (600, 900)), (-700, 100));
+        // A window narrower and shorter than suggested keeps the cursor at the same fractions.
+        assert_eq!(keep_grab(suggested, (-400, 120), (300, 450)), (-550, 110));
     }
 }

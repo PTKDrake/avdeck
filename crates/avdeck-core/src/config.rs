@@ -30,11 +30,16 @@ pub enum Appearance {
     Dark,
 }
 
-/// Where the window was, in points of the desktop.
+/// The window when Avdeck last closed.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct WindowPosition {
-    pub x: f32,
-    pub y: f32,
+pub struct WindowState {
+    /// Outer bounds, left, top, right and bottom, in physical pixels of the virtual desktop
+    /// (monitors at any DPI share it).
+    pub bounds: [i32; 4],
+    /// Client size of the Devices and Settings pages, in points.
+    pub page_size: Option<[f32; 2]>,
+    /// Longer side of the last device screen shown, in points.
+    pub screen_side: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -47,7 +52,9 @@ pub struct Config {
     pub close_tab: CloseAction,
     pub close_app: CloseAction,
     pub appearance: Appearance,
-    pub window: Option<WindowPosition>,
+    /// Replaces `window` (a position in points, wrong across monitors of different DPI), which
+    /// older versions wrote and this one ignores.
+    pub window_state: Option<WindowState>,
     /// AVD ids open as tabs when Avdeck closed, reopened (attached) at start.
     pub tabs: Vec<String>,
 }
@@ -65,7 +72,7 @@ impl Default for Config {
             close_tab: CloseAction::default(),
             close_app: CloseAction::default(),
             appearance: Appearance::default(),
-            window: None,
+            window_state: None,
             tabs: Vec::new(),
         }
     }
@@ -124,7 +131,11 @@ mod tests {
             },
             close_app: CloseAction::KeepRunning,
             appearance: Appearance::Dark,
-            window: Some(WindowPosition { x: 640.0, y: 80.5 }),
+            window_state: Some(WindowState {
+                bounds: [-1700, 600, -900, 1500],
+                page_size: Some([960.0, 640.5]),
+                screen_side: None,
+            }),
             tabs: vec!["Pixel_10_Pro_API_37_2".to_owned()],
             ..Default::default()
         };
@@ -146,5 +157,8 @@ mod tests {
         // Written by an older Avdeck: a launch table without the GPU mode.
         let config: Config = toml::from_str("[launch]\ncold_boot = false\n").unwrap();
         assert_eq!(config.launch.gpu.as_deref(), Some("host"));
+        // An older Avdeck saved the window position in points: dropped.
+        let config: Config = toml::from_str("[window]\nx = -1171.0\ny = 609.0\n").unwrap();
+        assert_eq!(config.window_state, None);
     }
 }
