@@ -30,6 +30,9 @@ its window problems on mixed-DPI, multi-monitor setups.
 - **Clean stops**: Stop asks the emulator to shut down over gRPC, so it saves its quick-boot
   snapshot. An emulator that hangs is reported as not responding and can be force-stopped, or
   force-restarted from its tab.
+- **First-run setup**: a welcome, then a check of the environment that runs each tool (`adb
+  version`, `java -version`, `emulator -accel-check` for WHPX/AEHD) and lets you point at anything
+  missing, then the main preferences. Settings > Run setup shows it again.
 - **Settings**: Android SDK, emulator, adb, command-line tools, AVD folder and JDK paths for when
   the environment lacks them (placeholders show what was found and where), GPU mode, snapshot
   saving, what closing a tab or the app does, and a System / Light / Dark theme.

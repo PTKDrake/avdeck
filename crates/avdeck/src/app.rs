@@ -91,6 +91,8 @@ pub struct App {
     window: Option<isize>,
     fit: Fit,
     pub dialog: Option<Dialog>,
+    /// The first-run setup, shown over everything while open.
+    pub setup: Option<crate::setup::Setup>,
     pub settings: SettingsForm,
     /// Filter on the Devices page.
     pub search: String,
@@ -114,6 +116,7 @@ impl App {
     pub fn new(ctx: &egui::Context, request: crate::instance::Request) -> Self {
         let config = Config::load();
         let saved = config.window_state;
+        let first_run = !config.setup_done;
         let tools = sdk::resolve(&config.tools, &sdk::System);
         let settings = SettingsForm::new(&config);
         theme::set_appearance(ctx, config.appearance);
@@ -140,6 +143,7 @@ impl App {
                 ..Default::default()
             },
             dialog: None,
+            setup: first_run.then(crate::setup::Setup::new),
             settings,
             search: String::new(),
             stopping: Default::default(),
@@ -428,6 +432,19 @@ impl App {
             })
             .await;
         });
+    }
+
+    /// After the tool paths changed: saves them, finds the tools again and rereads the AVDs.
+    pub fn config_changed(&mut self) {
+        self.save_config();
+        self.refresh_tools();
+    }
+
+    /// Finds the tools again (one may have been installed meanwhile) and rereads the AVDs.
+    pub fn refresh_tools(&mut self) {
+        self.tools = sdk::resolve(&self.config.tools, &sdk::System);
+        self.rescan(true);
+        self.settings = SettingsForm::new(&self.config);
     }
 
     pub fn save_config(&mut self) {
@@ -870,7 +887,12 @@ impl App {
             self.fit.pending = None;
         }
 
-        let (layout, extras, aspect, shape) = match &self.page {
+        // The setup covers the window like a page, whatever page is behind it.
+        let page = match &self.setup {
+            Some(_) => Page::Devices,
+            None => self.page.clone(),
+        };
+        let (layout, extras, aspect, shape) = match &page {
             Page::Emulator(id) => {
                 let Some(tab) = self.tab(id) else { return };
                 let Some(aspect) = tab.aspect() else {
@@ -898,7 +920,7 @@ impl App {
             }
         };
         // The smallest screen that still fits the toolbar beside it.
-        let min_screen = match &self.page {
+        let min_screen = match &page {
             Page::Emulator(id) if aspect > 0.0 => self.tab(id).map_or(0.0, |tab| {
                 display::min_screen_height(
                     tab.toolbar_height(),
@@ -927,7 +949,7 @@ impl App {
                     window::settle(hwnd as _, settle);
                 }
                 // Learn the size the user gave the window.
-                match &self.page {
+                match &page {
                     Page::Emulator(id) => {
                         let id = id.clone();
                         let screen = inner.size() - extras;
@@ -1147,6 +1169,14 @@ impl App {
             if !shown && tab.pid().is_some() && tab.pid() == previous_extended {
                 extended::detach();
             }
+        }
+
+        if self.setup.is_some() {
+            egui::CentralPanel::default().show(ui, |ui| crate::setup::show(self, ui));
+            self.dialogs(&ctx);
+            self.fit_window(&ctx, hwnd, 0.0);
+            self.handle_close_request(&ctx);
+            return;
         }
 
         let chrome = theme::palette(ui).chrome;

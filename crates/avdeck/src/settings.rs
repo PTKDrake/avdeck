@@ -26,7 +26,7 @@ pub struct SettingsForm {
 }
 
 /// Rows: label, what it is, what the browse button picks.
-const ROWS: [(&str, &str, Pick); 6] = [
+pub(crate) const ROWS: [(&str, &str, Pick); 6] = [
     (
         "Android SDK",
         "Folder with platform-tools or emulator",
@@ -52,7 +52,7 @@ const ROWS: [(&str, &str, Pick); 6] = [
 ];
 
 #[derive(Clone, Copy, PartialEq)]
-enum Pick {
+pub(crate) enum Pick {
     Folder,
     File,
 }
@@ -62,7 +62,7 @@ fn path(text: &str) -> Option<PathBuf> {
     (!text.is_empty()).then(|| PathBuf::from(text))
 }
 
-fn field(overrides: &mut Overrides, index: usize) -> &mut Option<PathBuf> {
+pub(crate) fn field(overrides: &mut Overrides, index: usize) -> &mut Option<PathBuf> {
     match index {
         0 => &mut overrides.sdk,
         1 => &mut overrides.emulator,
@@ -110,7 +110,7 @@ impl SettingsForm {
         }
     }
 
-    fn apply(&self, config: &mut Config) {
+    pub fn apply(&self, config: &mut Config) {
         for index in 0..ROWS.len() {
             *field(&mut config.tools, index) = path(&self.paths[index]);
         }
@@ -119,6 +119,10 @@ impl SettingsForm {
         config.close_tab = self.close_tab;
         config.close_app = self.close_app;
         config.appearance = self.appearance;
+    }
+
+    pub fn appearance(&self) -> Appearance {
+        self.appearance
     }
 
     /// Whether Save would change the configuration.
@@ -136,7 +140,11 @@ const SIDE_COLUMN: f32 = 340.0;
 const GAP: f32 = 16.0;
 
 /// `add` in a column of `width`, centered in `ui`.
-fn centered<R>(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+pub(crate) fn centered<R>(
+    ui: &mut egui::Ui,
+    width: f32,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
     let margin = ((ui.available_width() - width) / 2.0).max(0.0);
     ui.horizontal_top(|ui| {
         ui.add_space(margin);
@@ -228,10 +236,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                 .inner;
             if save.clicked() {
                 app.settings.apply(&mut app.config);
-                app.save_config();
-                app.tools = sdk::resolve(&app.config.tools, &sdk::System);
-                app.rescan(true);
-                app.settings = SettingsForm::new(&app.config);
+                app.config_changed();
                 theme::set_appearance(ui.ctx(), app.config.appearance);
             }
             if ui
@@ -243,6 +248,14 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
             }
             if changed {
                 ui.label(theme::muted(ui, "Unsaved changes"));
+            }
+            if theme::secondary(ui, "Run setup")
+                .on_hover_text("The first-run welcome, environment check and preferences")
+                .clicked()
+            {
+                // The setup edits the preferences from what is saved.
+                app.settings = SettingsForm::new(&app.config);
+                app.setup = Some(crate::setup::Setup::new());
             }
         });
     });
@@ -407,7 +420,7 @@ fn path_field(app: &mut App, ui: &mut egui::Ui, index: usize, width: f32) {
 }
 
 /// System, Light, Dark as one segmented control; applied on Save.
-fn appearance(app: &mut App, ui: &mut egui::Ui) {
+pub(crate) fn appearance(app: &mut App, ui: &mut egui::Ui) {
     card(ui, "Appearance", "", |ui| {
         let palette = theme::palette(ui);
         let width = ui.available_width();
@@ -479,7 +492,7 @@ fn appearance(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
-fn starting(app: &mut App, ui: &mut egui::Ui) {
+pub(crate) fn starting(app: &mut App, ui: &mut egui::Ui) {
     card(
         ui,
         "Starting devices",
@@ -510,7 +523,7 @@ fn starting(app: &mut App, ui: &mut egui::Ui) {
     );
 }
 
-fn closing(app: &mut App, ui: &mut egui::Ui) {
+pub(crate) fn closing(app: &mut App, ui: &mut egui::Ui) {
     let name = |action: CloseAction| match action {
         CloseAction::Ask => "Ask every time",
         CloseAction::Stop => "Stop the emulator",

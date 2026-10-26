@@ -57,6 +57,8 @@ pub struct Config {
     pub window_state: Option<WindowState>,
     /// AVD ids open as tabs when Avdeck closed, reopened (attached) at start.
     pub tabs: Vec<String>,
+    /// The first-run setup was finished or skipped.
+    pub setup_done: bool,
 }
 
 impl Default for Config {
@@ -74,6 +76,7 @@ impl Default for Config {
             appearance: Appearance::default(),
             window_state: None,
             tabs: Vec::new(),
+            setup_done: false,
         }
     }
 }
@@ -137,6 +140,7 @@ mod tests {
                 screen_side: None,
             }),
             tabs: vec!["Pixel_10_Pro_API_37_2".to_owned()],
+            setup_done: true,
             ..Default::default()
         };
         config.save_to(&path).unwrap();
@@ -153,6 +157,7 @@ mod tests {
         assert_eq!(config.appearance, Appearance::System);
         assert_eq!(config.tools.jdk, Some(PathBuf::from(r"C:\jdk")));
         assert!(config.tabs.is_empty());
+        assert!(!config.setup_done);
         assert_eq!(config.launch.gpu.as_deref(), Some("host"));
         // Written by an older Avdeck: a launch table without the GPU mode.
         let config: Config = toml::from_str("[launch]\ncold_boot = false\n").unwrap();

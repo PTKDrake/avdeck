@@ -335,6 +335,12 @@ pub fn emulator_version(emulator: &Path) -> Option<String> {
     crate::ini::parse(&properties).remove("Pkg.Revision")
 }
 
+/// `Pkg.Revision` of the command-line tools whose `bin` folder is `bin`, e.g. `23.0`.
+pub fn cmdline_tools_version(bin: &Path) -> Option<String> {
+    let properties = std::fs::read_to_string(bin.parent()?.join("source.properties")).ok()?;
+    crate::ini::parse(&properties).remove("Pkg.Revision")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

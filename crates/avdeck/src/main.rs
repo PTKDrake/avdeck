@@ -16,6 +16,7 @@ mod manage;
 mod render;
 mod session;
 mod settings;
+mod setup;
 mod tab;
 mod theme;
 mod window;
