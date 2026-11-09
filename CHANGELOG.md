@@ -3,6 +3,14 @@
 All notable changes to Avdeck. Versions follow [Semantic Versioning](https://semver.org); each
 release's section is also its notes on the GitHub Releases page.
 
+## 1.3.2 - 2026-11-09
+
+### Fixed
+
+- Tab then Enter on an emulator tab no longer switches to the device list. Tab moved the keyboard
+  focus to the tab bar and Enter pressed its first button; Tab, the arrow keys and Escape now
+  always go to the emulator.
+
 ## 1.3.1 - 2026-10-26
 
 ### Fixed
