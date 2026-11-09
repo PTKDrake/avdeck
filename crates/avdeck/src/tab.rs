@@ -294,6 +294,7 @@ impl EmulatorTab {
 
         let natural = self.natural();
         let response = ui.interact(rect, ui.scope_id().with("screen"), Sense::click_and_drag());
+        hold_keyboard(&response);
         let pressed = response.is_pointer_button_down_on();
         let position = response.interact_pointer_pos().and_then(|point| {
             display::to_device((point.x, point.y), screen, natural, self.rotation)
@@ -397,6 +398,8 @@ impl EmulatorTab {
         );
         match phase {
             Phase::Starting | Phase::Running => {
+                // Nothing here takes keys; without a holder, Tab would reach the tab bar.
+                hold_keyboard(&ui.interact(area, ui.scope_id().with("screen"), Sense::click()));
                 column.spinner();
                 let text = if phase == Phase::Starting {
                     format!("Starting {}…", self.avd.name)
@@ -546,4 +549,24 @@ impl EmulatorTab {
             }
         }
     }
+}
+
+/// Keeps keyboard focus on `holder` (unless another widget, such as a dialog's, has it) and
+/// stops egui using Tab, the arrows and Escape to move it: those keys belong to the emulator, and
+/// Tab then Enter would otherwise focus and press a button of the tab bar.
+fn hold_keyboard(holder: &egui::Response) {
+    holder.ctx.memory_mut(|memory| {
+        if memory.focused().is_none() {
+            memory.request_focus(holder.id);
+        }
+        memory.set_focus_lock_filter(
+            holder.id,
+            egui::EventFilter {
+                tab: true,
+                horizontal_arrows: true,
+                vertical_arrows: true,
+                escape: true,
+            },
+        );
+    });
 }
