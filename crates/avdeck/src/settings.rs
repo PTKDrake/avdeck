@@ -122,8 +122,8 @@ impl SettingsForm {
     }
 
     pub fn apply(&self, config: &mut Config) {
-        for index in 0..ROWS.len() {
-            *field(&mut config.tools, index) = path(&self.paths[index]);
+        for (index, text) in self.paths.iter().enumerate().take(ROWS.len()) {
+            *field(&mut config.tools, index) = path(text);
         }
         config.launch.gpu = self.gpu.clone();
         config.launch.no_snapshot_save = self.no_snapshot_save;
