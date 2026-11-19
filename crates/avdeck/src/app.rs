@@ -219,7 +219,27 @@ impl App {
 
     /// A command-line request: open its AVD, starting it with the requested options if needed.
     fn handle_request(&mut self, ctx: &egui::Context, request: &crate::instance::Request) {
-        let Some(id) = &request.avd else { return };
+        let Some(name) = &request.avd else { return };
+        // `emulator-5554`, as adb lists it, names the running emulator with that console port.
+        let id = &match serial_port(name) {
+            Some(port) => {
+                self.rescan(true);
+                let found = self
+                    .live
+                    .iter()
+                    .filter(|running| running.console_port == Some(port))
+                    .max_by_key(|running| running.pid)
+                    .map(|running| running.avd_id.clone());
+                match found {
+                    Some(id) => id,
+                    None => {
+                        self.dialog = Some(Dialog::Error(format!("No emulator runs as {name}.")));
+                        return;
+                    }
+                }
+            }
+            None => name.clone(),
+        };
         // A tab whose emulator has exited starts it again, with this request's options; a hung
         // one only shows, it offers to force a restart itself.
         let exited = self.tab(id).is_some_and(|tab| {
@@ -234,6 +254,11 @@ impl App {
         } else {
             let options = request.options(&self.config.launch);
             self.start(ctx, id, &options);
+        }
+        if let Some(location) = request.location
+            && let Some(tab) = self.tab_mut(id)
+        {
+            tab.pending_location = Some(location);
         }
     }
 
@@ -1111,8 +1136,16 @@ impl App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
+        let adb = self.tools.adb.as_ref().map(|adb| adb.path.clone());
+        let env = self.tools.child_env();
         for tab in &mut self.tabs {
             tab.update(&ctx);
+            // Only the tab on screen is worth asking adb about.
+            if let Some(adb) = &adb
+                && self.page == Page::Emulator(tab.avd.id.clone())
+            {
+                tab.poll_guest_rotation(adb, &env);
+            }
         }
         // Buttons inside a tab that need the app.
         let requests: Vec<(String, crate::tab::Request)> = self
@@ -1232,8 +1265,13 @@ impl App {
     }
 }
 
+/// The console port of an adb serial such as `emulator-5554`.
+fn serial_port(name: &str) -> Option<u16> {
+    name.strip_prefix("emulator-")?.parse().ok()
+}
+
 /// Runs adb without a console window; the error is its output.
-fn adb_command(
+pub(crate) fn adb_command(
     adb: &std::path::Path,
     args: &[&str],
     env: &[(&'static str, std::ffi::OsString)],
@@ -1404,4 +1442,16 @@ pub fn modal(ctx: &egui::Context, id: &str, content: impl FnOnce(&mut egui::Ui))
             ui.spacing_mut().item_spacing.y = 10.0;
             content(ui);
         });
+}
+
+#[cfg(test)]
+mod serial_tests {
+    use super::serial_port;
+
+    #[test]
+    fn reads_adb_serials() {
+        assert_eq!(serial_port("emulator-5554"), Some(5554));
+        assert_eq!(serial_port("Pixel_Tablet"), None);
+        assert_eq!(serial_port("emulator-x"), None);
+    }
 }

@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! avdeck [--avd NAME] [--cold-boot] [--wipe-data] [--no-snapshot-save] [--gpu MODE]
-//!        [-- EMULATOR FLAGS...]
+//!        [--location LAT,LON[,ALTITUDE]] [-- EMULATOR FLAGS...]
 //! ```
 
 use std::sync::{Mutex, OnceLock};
@@ -24,16 +24,62 @@ use windows_sys::core::BOOL;
 const MAGIC: usize = 0x4156_444B;
 
 /// What a start of Avdeck asks for.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Request {
-    /// Open (start or attach) this AVD; `None` only brings the window to the front.
+    /// Open (start or attach) this AVD, or the running emulator `emulator-PORT`; `None` only
+    /// brings the window to the front.
     pub avd: Option<String>,
     pub cold_boot: bool,
     pub wipe_data: bool,
     pub no_snapshot_save: bool,
     pub gpu: Option<String>,
+    /// Put the AVD's GPS here (needs `--avd`), once it runs.
+    pub location: Option<Location>,
     /// Flags after `--`, passed to the emulator as they are.
     pub extra: Vec<String>,
+}
+
+/// A GPS fix: degrees, and meters above the WGS 84 ellipsoid.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Location {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub altitude: f64,
+}
+
+impl Location {
+    /// `LAT,LON` or `LAT,LON,ALTITUDE`, e.g. `21.0285,105.8542`.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let bad =
+            || format!("bad location {text:?}: use LAT,LON[,ALTITUDE], e.g. 21.0285,105.8542");
+        let numbers = text
+            .split(',')
+            .map(|part| {
+                part.trim()
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|number| number.is_finite())
+            })
+            .collect::<Option<Vec<f64>>>()
+            .ok_or_else(bad)?;
+        let (latitude, longitude, altitude) = match numbers[..] {
+            [latitude, longitude] => (latitude, longitude, 0.0),
+            [latitude, longitude, altitude] => (latitude, longitude, altitude),
+            _ => return Err(bad()),
+        };
+        if !(-90.0..=90.0).contains(&latitude) || !(-180.0..=180.0).contains(&longitude) {
+            return Err(format!("location out of range: {text:?}"));
+        }
+        Ok(Self {
+            latitude,
+            longitude,
+            altitude,
+        })
+    }
+
+    fn to_arg(self) -> String {
+        format!("{},{},{}", self.latitude, self.longitude, self.altitude)
+    }
 }
 
 impl Request {
@@ -47,9 +93,16 @@ impl Request {
                 "--wipe-data" => request.wipe_data = true,
                 "--no-snapshot-save" => request.no_snapshot_save = true,
                 "--gpu" => request.gpu = Some(args.next().ok_or("--gpu needs a mode")?),
+                "--location" => {
+                    let text = args.next().ok_or("--location needs LAT,LON")?;
+                    request.location = Some(Location::parse(&text)?);
+                }
                 "--" => request.extra.extend(args.by_ref()),
                 other => return Err(format!("unknown option {other}")),
             }
+        }
+        if request.location.is_some() && request.avd.is_none() {
+            return Err("--location needs --avd".to_owned());
         }
         Ok(request)
     }
@@ -82,6 +135,9 @@ impl Request {
         }
         if let Some(gpu) = &self.gpu {
             args.extend(["--gpu".to_owned(), gpu.clone()]);
+        }
+        if let Some(location) = self.location {
+            args.extend(["--location".to_owned(), location.to_arg()]);
         }
         if !self.extra.is_empty() {
             args.push("--".to_owned());
@@ -226,9 +282,25 @@ mod tests {
 
     #[test]
     fn hands_over_the_same_request() {
-        let request =
-            Request::parse(args("--avd P --wipe-data --no-snapshot-save -- -no-audio")).unwrap();
+        let request = Request::parse(args(
+            "--avd P --wipe-data --no-snapshot-save --location 21.0285,105.8542,12.5 -- -no-audio",
+        ))
+        .unwrap();
         assert_eq!(Request::parse(request.to_args()).unwrap(), request);
+    }
+
+    #[test]
+    fn parses_locations() {
+        let location = Location::parse("21.0285, 105.8542").unwrap();
+        assert_eq!(
+            (location.latitude, location.longitude, location.altitude),
+            (21.0285, 105.8542, 0.0)
+        );
+        assert_eq!(Location::parse("-33.9,151.2,58").unwrap().altitude, 58.0);
+        for bad in ["", "1", "a,b", "91,0", "0,181", "1,2,3,4", "nan,1"] {
+            assert!(Location::parse(bad).is_err(), "{bad}");
+        }
+        assert!(Request::parse(args("--location 1,2")).is_err());
     }
 
     #[test]

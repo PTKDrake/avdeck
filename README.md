@@ -102,16 +102,18 @@ Closing a tab or the app asks whether the devices keep running in the background
 ### Command line
 
 ```text
-avdeck [--avd NAME] [--cold-boot] [--wipe-data] [--no-snapshot-save] [--gpu MODE] [-- EMULATOR FLAGS]
+avdeck [--avd NAME] [--cold-boot] [--wipe-data] [--no-snapshot-save] [--gpu MODE]
+       [--location LAT,LON[,ALTITUDE]] [-- EMULATOR FLAGS]
 ```
 
 | Option | Effect |
 |---|---|
-| `--avd NAME` | Open that AVD: attach when it already runs, start it otherwise |
+| `--avd NAME` | Open that AVD: attach when it already runs, start it otherwise. `emulator-PORT` (the adb serial) names the running emulator with that console port |
 | `--cold-boot` | Start without loading the quick-boot snapshot |
 | `--wipe-data` | Start from a factory reset |
 | `--no-snapshot-save` | Do not save the state when the device stops |
 | `--gpu MODE` | `host` (default), `auto`, `swiftshader_indirect` or `angle_indirect` |
+| `--location LAT,LON[,ALTITUDE]` | Move the device's GPS (degrees, meters), once it runs; needs `--avd` |
 | `-- FLAGS` | Passed to the emulator as they are |
 
 ### Keyboard shortcuts

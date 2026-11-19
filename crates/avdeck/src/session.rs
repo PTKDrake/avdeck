@@ -11,8 +11,8 @@ use avdeck_grpc::control::physical_model_value::PhysicalType;
 use avdeck_grpc::control::posture::PostureValue;
 use avdeck_grpc::control::theming_style::Style;
 use avdeck_grpc::control::{
-    ClipData, ImageFormat, KeyboardEvent, PaneEntry, ParameterValue, PhysicalModelValue, Posture,
-    ThemingStyle, Touch, TouchEvent,
+    ClipData, GpsState, ImageFormat, KeyboardEvent, PaneEntry, ParameterValue, PhysicalModelValue,
+    Posture, ThemingStyle, Touch, TouchEvent,
 };
 use avdeck_grpc::{Auth, Emulator, Frame, SharedFrames};
 use std::path::PathBuf;
@@ -51,6 +51,12 @@ pub enum Input {
     Rotate(i32),
     /// Fold or unfold a foldable.
     Fold(bool),
+    /// Move the GPS: degrees, then meters of altitude.
+    Location {
+        latitude: f64,
+        longitude: f64,
+        altitude: f64,
+    },
     /// Save a PNG to the folder set in Avdeck's settings (`None`: the emulator's setting, else
     /// `Pictures\Avdeck`).
     Screenshot(Option<PathBuf>),
@@ -462,6 +468,33 @@ async fn forward_input(
                 Ok(())
             }
             Input::Paste(text) | Input::Text(text) => paste(&mut sender, text).await,
+            Input::Location {
+                latitude,
+                longitude,
+                altitude,
+            } => {
+                let result = sender
+                    .controller
+                    .set_gps(GpsState {
+                        passive_update: true,
+                        latitude,
+                        longitude,
+                        altitude,
+                        // Android wants a fix with some satellites behind it.
+                        satellites: 8,
+                        ..Default::default()
+                    })
+                    .await;
+                // Say what happened, not what was asked: errors can echo the token, so never
+                // print them.
+                let text = match &result {
+                    Ok(_) => format!("Location set to {latitude}, {longitude}"),
+                    Err(_) => "Could not set the location".to_owned(),
+                };
+                state.lock().unwrap().notice = Some(text);
+                ctx.request_repaint();
+                result.map(drop)
+            }
             Input::Rotate(quarters) => sender
                 .controller
                 .set_physical_model(PhysicalModelValue {

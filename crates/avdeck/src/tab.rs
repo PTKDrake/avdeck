@@ -8,7 +8,9 @@ use avdeck_core::avd::Avd;
 use avdeck_core::display::{self, Rotation};
 use egui::{self, Color32, ColorImage, Sense, TextureHandle, TextureOptions, pos2, vec2};
 use std::process::Child;
-use std::time::Instant;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy)]
 enum Action {
@@ -74,6 +76,15 @@ pub struct EmulatorTab {
     pub dropped: Vec<std::path::PathBuf>,
     /// Something only the app can do (restart, close), asked from inside the tab.
     pub request: Option<Request>,
+    /// Rotation Android reports (quarter turns, -1 unknown), refreshed by `poll_guest_rotation`.
+    guest: Arc<AtomicI32>,
+    /// A rotation query is running.
+    guest_busy: Arc<AtomicBool>,
+    guest_polled: Option<Instant>,
+    /// The guest rotation last acted on.
+    guest_seen: Option<i32>,
+    /// Asked for on the command line; sent once the emulator runs.
+    pub pending_location: Option<crate::instance::Location>,
 }
 
 pub enum Request {
@@ -115,7 +126,58 @@ impl EmulatorTab {
             notice: None,
             dropped: Vec::new(),
             request: None,
+            guest: Arc::new(AtomicI32::new(-1)),
+            guest_busy: Arc::new(AtomicBool::new(false)),
+            guest_polled: None,
+            guest_seen: None,
+            pending_location: None,
         }
+    }
+
+    /// The emulator turns its skin only for the sensor; a rotation set from adb
+    /// (`settings put system user_rotation`) turns just the guest's content, which then shows
+    /// sideways. Every two seconds, asks Android for its rotation and, when it changes, turns the
+    /// skin to match. Toolbar rotation of a locked guest is left alone: only changes count.
+    pub fn poll_guest_rotation(
+        &mut self,
+        adb: &std::path::Path,
+        env: &[(&'static str, std::ffi::OsString)],
+    ) {
+        if self.phase() != Phase::Running {
+            return;
+        }
+        let guest = self.guest.load(Ordering::Relaxed);
+        // Before the first frame `rotation` is only the default: wait for it.
+        if guest >= 0 && self.frame_size.0 > 0 && self.guest_seen != Some(guest) {
+            // The first reading also fixes a skin left turned away from Android.
+            if self.guest_seen.is_some() || self.rotation.quarters() != guest {
+                self.session.send(Input::Rotate(guest));
+            }
+            self.guest_seen = Some(guest);
+        }
+        let Some(port) = self.console_port() else {
+            return;
+        };
+        if self
+            .guest_polled
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(2))
+            || self.guest_busy.swap(true, Ordering::Relaxed)
+        {
+            return;
+        }
+        self.guest_polled = Some(Instant::now());
+        let (adb, env) = (adb.to_owned(), env.to_vec());
+        let (guest, busy) = (self.guest.clone(), self.guest_busy.clone());
+        std::thread::spawn(move || {
+            let serial = format!("emulator-{port}");
+            let args = ["-s", &serial, "shell", "dumpsys", "display"];
+            if let Ok(text) = crate::app::adb_command(&adb, &args, &env)
+                && let Some(quarters) = parse_display_orientation(&text)
+            {
+                guest.store(quarters, Ordering::Relaxed);
+            }
+            busy.store(false, Ordering::Relaxed);
+        });
     }
 
     /// Height in points the toolbar needs: its buttons, separators and margins.
@@ -174,6 +236,14 @@ impl EmulatorTab {
         }
         if let Some(text) = notice {
             self.notice = Some((text, Instant::now()));
+        }
+        if self.pending_location.is_some() && self.phase() == Phase::Running {
+            let location = self.pending_location.take().unwrap();
+            self.session.send(Input::Location {
+                latitude: location.latitude,
+                longitude: location.longitude,
+                altitude: location.altitude,
+            });
         }
         if let Some(frame) = frame {
             let image = ColorImage::from_rgba_unmultiplied(
@@ -569,4 +639,24 @@ fn hold_keyboard(holder: &egui::Response) {
             },
         );
     });
+}
+
+/// `mCurrentOrientation=N` of `dumpsys display`: the guest's rotation in quarter turns.
+fn parse_display_orientation(text: &str) -> Option<i32> {
+    let rest = text.split("mCurrentOrientation=").nth(1)?;
+    let digit = rest.chars().next()?.to_digit(10)?;
+    (digit < 4).then_some(digit as i32)
+}
+
+#[cfg(test)]
+mod orientation_tests {
+    use super::parse_display_orientation;
+
+    #[test]
+    fn reads_the_current_orientation() {
+        let text = "DisplayDeviceInfo\n  mCurrentOrientation=1\n  other=2";
+        assert_eq!(parse_display_orientation(text), Some(1));
+        assert_eq!(parse_display_orientation("nothing"), None);
+        assert_eq!(parse_display_orientation("mCurrentOrientation=7"), None);
+    }
 }

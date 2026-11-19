@@ -27,7 +27,7 @@ fn main() {
         Err(error) => {
             // No console (windows subsystem): say it in a message box.
             message_box(&format!(
-                "{error}\n\nUsage: avdeck [--avd NAME] [--cold-boot] [--wipe-data] [--no-snapshot-save] [--gpu MODE] [-- EMULATOR FLAGS]"
+                "{error}\n\nUsage: avdeck [--avd NAME] [--cold-boot] [--wipe-data] [--no-snapshot-save] [--gpu MODE] [--location LAT,LON[,ALTITUDE]] [-- EMULATOR FLAGS]"
             ));
             return;
         }
