@@ -3,6 +3,22 @@
 All notable changes to Avdeck. Versions follow [Semantic Versioning](https://semver.org); each
 release's section is also its notes on the GitHub Releases page.
 
+## 1.4.0 - 2026-11-19
+
+### Added
+
+- `avdeck --avd NAME --location LAT,LON[,ALTITUDE]` moves the device's GPS, once it runs. It
+  works on an Avdeck that is already open, and a notice says whether the emulator took it.
+- `--avd` also accepts an adb serial such as `emulator-5554`, for the running emulator with that
+  console port.
+
+### Fixed
+
+- A rotation set from adb (`settings put system user_rotation 1`) now turns the screen too. The
+  emulator only turns its skin for the sensor, so the picture showed sideways inside a window of
+  the old shape. The tab on screen asks Android for its rotation every two seconds and follows
+  its changes; the rotate buttons keep working.
+
 ## 1.3.2 - 2026-11-09
 
 ### Fixed
